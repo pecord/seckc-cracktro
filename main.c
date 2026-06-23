@@ -562,8 +562,10 @@ static void draw_scroller(uint32_t frame) {
 				int g = 255 - ((wz - (S3_BASEZ - S3_WAVE)) * 90) / (2 * S3_WAVE);
 				uint8_t gg = (uint8_t)(g < 130 ? 130 : g);
 				int wd = (2 * S3_BASEZ) / wz;          /* perspective stroke width */
+				int ed = (S3_BASEZ - wz) / 4;          /* extrude depth, near only */
 				if (wd < 1) wd = 1;
 				if (wd > 4) wd = 4;
+				if (ed > 18) ed = 18;                  /* far letters go flat (no ghost) */
 				for (s = 0; s < gl->nseg; s++) {
 					const signed char *sg = gl->seg + s * 4;
 					short vax = (short)(wx + sg[0] * S3_SCALE);
@@ -572,13 +574,17 @@ static void draw_scroller(uint32_t frame) {
 					short vby = (short)(wy - sg[3] * S3_SCALE);
 					SVECTOR fa = { vax, vay, (short)wz, 0 };
 					SVECTOR fb = { vbx, vby, (short)wz, 0 };
-					SVECTOR ba = { vax, vay, (short)(wz + 14), 0 };
-					SVECTOR bb = { vbx, vby, (short)(wz + 14), 0 };
-					DVECTOR pfa, pfb, pba, pbb;
+					DVECTOR pfa, pfb;
 					project(&fa, &pfa); project(&fb, &pfb);
-					project(&ba, &pba); project(&bb, &pbb);
-					/* extruded back face (dim) then bright filled front face */
-					add_fillstroke(pba, pbb, wd, 16, (uint8_t)(gg / 3), 50, 3);
+					/* extruded back face only when the letter is near enough that
+					 * the depth reads as 3D rather than a doubled ghost */
+					if (ed > 1) {
+						SVECTOR ba = { vax, vay, (short)(wz + ed), 0 };
+						SVECTOR bb = { vbx, vby, (short)(wz + ed), 0 };
+						DVECTOR pba, pbb;
+						project(&ba, &pba); project(&bb, &pbb);
+						add_fillstroke(pba, pbb, wd, 16, (uint8_t)(gg / 3), 50, 3);
+					}
 					add_fillstroke(pfa, pfb, wd, 40, gg, 120, 2);
 				}
 			}
