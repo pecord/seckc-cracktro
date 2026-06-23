@@ -1,0 +1,12 @@
+# build artifacts
+build/
+*.o
+*.elf
+*.exe
+*.map
+
+# local working notes / iteration renders
+inspiration/
+
+# os
+.DS_Store
