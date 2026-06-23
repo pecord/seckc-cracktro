@@ -248,13 +248,19 @@ static void rt_render(uint32_t frame) {
 	fx cx0, cy0, cz0, cc0, ox, oy, oz;
 	fx Px, Py, Pz, invPz, u, v, du;
 	int ic, jc, pri, prj, i0, i1, j0, j1, i, j;
-	uint32_t *sp = (uint32_t *)rt_bg, *dp = (uint32_t *)rmbuf;
-	int n = RM_W * RM_H / 2;
+	int parity = (int)(frame & 1);
 
-	/* The floor + sky are static, so blit the baked background, then overpaint
-	 * ONLY the sphere's screen-space bounding box. ~80% of pixels never run the
-	 * intersection test. */
-	while (n--) *dp++ = *sp++;
+	/* Interlaced: recompute only this frame's parity scanlines; the rest keep
+	 * last frame. Floor/sky are static so kept rows stay identical -- only the
+	 * moving sphere shows a faint 1-frame comb. Roughly halves rt_render.
+	 * On each parity row, restore the baked background; the sphere bbox below
+	 * then overpaints (also only on parity rows). */
+	for (j = parity; j < RM_H; j += 2) {
+		uint32_t *d = (uint32_t *)(rmbuf + j * RM_W);
+		uint32_t *s = (uint32_t *)(rt_bg  + j * RM_W);
+		int w = RM_W / 2;
+		while (w--) *d++ = *s++;
+	}
 
 	cx0 = fmul((fx)isin((frame * 20) & 4095) << 4, F(1.7));
 	cy0 = F(1.0) + fmul((fx)isin((frame * 40) & 4095) << 4, F(0.35));
@@ -276,8 +282,9 @@ static void rt_render(uint32_t frame) {
 	i0 = ic - pri; i1 = ic + pri; j0 = jc - prj; j1 = jc + prj;
 	if (i0 < 0) i0 = 0; if (i1 >= RM_W) i1 = RM_W - 1;
 	if (j0 < 0) j0 = 0; if (j1 >= RM_H) j1 = RM_H - 1;
+	if ((j0 & 1) != parity) j0++;          /* sphere only on parity rows */
 
-	for (j = j0; j <= j1; j++) {
+	for (j = j0; j <= j1; j += 2) {
 		for (i = i0; i <= i1; i++) {
 			int px = j * RM_W + i;
 			fx dx = rt_dir[px][0], dy = rt_dir[px][1], dz = rt_dir[px][2];
