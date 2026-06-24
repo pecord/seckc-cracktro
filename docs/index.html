@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Forces cross-origin isolation on static hosts (GitHub Pages) so the
+     emulator can use SharedArrayBuffer + its threaded core (full speed).
+     Reloads once on first visit to register the worker. -->
+<script src="coi-serviceworker.min.js"></script>
 <title>SecKC Cracktro — PSX demo in your browser</title>
 <meta name="description" content="A SecKC demoscene cracktro for the original PlayStation, running in your browser.">
 <style>
