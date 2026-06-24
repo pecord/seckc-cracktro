@@ -1,14 +1,14 @@
 /*
  * rave-psx : a SecKC demoscene cracktro for the MiSTer PSX core.
  *
- *   - themed cyan/magenta gouraud table-plasma backdrop
- *   - warp starfield
- *   - a rotating neon WIREFRAME "SecKC" logo (extruded, chrome-ish)
- *   - additive-glow wireframe accent cubes
- *   - a sine-scroller greetz to the KC hacker scene
+ *   - synthwave/vaporwave backdrop: scrolling neon grid, banded sun, and
+ *     wireframe canyon walls that rush toward the camera
+ *   - the SecKC ASCII skull as a spinning extruded 3D slab
+ *   - flying Windows flags fluttering in a sweeping wind gust
+ *   - a 3D perspective sine-scroller of greetz, and a boot splash
+ *   - (toggle VAPORWAVE 0 for the fixed-point raytracer backdrop)
  *
- * Everything additively blended and synced to a 140 BPM clock.
- * Built with PSn00bSDK. NTSC 320x240, double buffered.
+ * Built with PSn00bSDK. NTSC 320x240, double buffered, 110 BPM clock.
  */
 
 #include <stdint.h>
@@ -151,6 +151,26 @@ static void add_fillstroke(DVECTOR a, DVECTOR b, int w,
 	db_nextpri = (uint8_t *)(p + 1);
 }
 
+/* Draw a flat 2D string centred on cx at baseline y, using the vector font as
+ * filled strokes. */
+static void draw_text2d(const char *str, int cx, int y, int sc,
+                        uint8_t r, uint8_t g, uint8_t b, int otz) {
+	int len = 0, i, x;
+	while (str[len]) len++;
+	x = cx - (len * VF_ADV * sc) / 2;
+	for (i = 0; i < len; i++) {
+		const VGlyph *gl = vglyph(str[i]);
+		int s;
+		for (s = 0; s < gl->nseg; s++) {
+			const signed char *sg = gl->seg + s * 4;
+			DVECTOR a = { (short)(x + sg[0] * sc), (short)(y - sg[1] * sc) };
+			DVECTOR c = { (short)(x + sg[2] * sc), (short)(y - sg[3] * sc) };
+			add_fillstroke(a, c, sc > 2 ? 2 : 1, r, g, b, otz);
+		}
+		x += VF_ADV * sc;
+	}
+}
+
 /* project a model vertex with the current GTE matrix -> screen DVECTOR */
 static void project(const SVECTOR *v, DVECTOR *out) {
 	gte_ldv0(v);
@@ -170,6 +190,9 @@ static int onscreen(const DVECTOR *p) {
  * no GTE — just 16.16 fixed point and an integer sqrt. */
 #define RM_W 128
 #define RM_H 96
+
+/* backdrop: 1 = synthwave/vaporwave grid+sun, 0 = fixed-point raytracer */
+#define VAPORWAVE 1
 
 typedef int32_t fx;
 #define F(a)   ((fx)((a) * 65536.0))      /* constants only (compile-time) */
@@ -345,6 +368,120 @@ static void draw_rt_backdrop(void) {
 	db_nextpri = (uint8_t *)(p + 1);
 }
 
+/* --------------------------------------------------------------- vaporwave */
+/* Classic synthwave backdrop: purple gradient sky, a banded semicircle sun on
+ * the horizon, and a magenta neon perspective grid scrolling toward the camera.
+ * All 2D primitives, basically free. */
+#define VW_HORIZON 138
+#define VW_SUNR    54
+
+static void draw_vaporwave(uint32_t frame) {
+	POLY_G4 *q;
+	int i, k, fr;
+
+	/* sky: dark purple (top) -> magenta (horizon) */
+	q = (POLY_G4 *)db_nextpri;
+	setPolyG4(q);
+	setXY4(q, 0, 0, SCREEN_XRES, 0, 0, VW_HORIZON, SCREEN_XRES, VW_HORIZON);
+	setRGB0(q, 26, 8, 48); setRGB1(q, 26, 8, 48);
+	setRGB2(q, 122, 26, 112); setRGB3(q, 122, 26, 112);
+	addPrim(db[db_active].ot + (OT_LEN - 1), q);
+	db_nextpri = (uint8_t *)(q + 1);
+
+	/* ground: magenta (horizon) -> near black */
+	q = (POLY_G4 *)db_nextpri;
+	setPolyG4(q);
+	setXY4(q, 0, VW_HORIZON, SCREEN_XRES, VW_HORIZON, 0, SCREEN_YRES, SCREEN_XRES, SCREEN_YRES);
+	setRGB0(q, 58, 12, 70); setRGB1(q, 58, 12, 70);
+	setRGB2(q, 8, 4, 20); setRGB3(q, 8, 4, 20);
+	addPrim(db[db_active].ot + (OT_LEN - 1), q);
+	db_nextpri = (uint8_t *)(q + 1);
+
+	/* banded sun: stacked horizontal bars forming a semicircle, slits below */
+	for (i = 3; i <= VW_SUNR; i += 3) {
+		int y  = VW_HORIZON - VW_SUNR + i;
+		int dy = VW_SUNR - i;
+		int hw = (int)isqrt32((uint32_t)(VW_SUNR * VW_SUNR - dy * dy));
+		int t  = (i * 255) / VW_SUNR;
+		TILE *s;
+		if (hw < 1) continue;
+		if (i > VW_SUNR * 52 / 100 && ((i / 3) & 1)) continue;   /* slits */
+		s = (TILE *)db_nextpri;
+		setTile(s);
+		setXY0(s, 160 - hw, y);
+		setWH(s, hw * 2, 3);
+		setRGB0(s, 255, 232 - (t * 150) / 255, 96 + (t * 110) / 255);
+		addPrim(db[db_active].ot + (OT_LEN - 2), s);
+		db_nextpri = (uint8_t *)(s + 1);
+	}
+
+	/* Canyon walls + floor grid share ONE scroll phase, so struts and grid
+	 * lines rush toward the camera together: it reads as driving through. */
+	fr = 255 - (int)((frame * 5) & 255);
+
+	/* canyon walls: vertical wireframe struts at scrolling depths, jagged
+	 * ridge linking their tops; nearer = wider apart and taller */
+	{
+		static const unsigned char prof[8] = { 36, 80, 26, 92, 46, 70, 32, 84 };
+		int sc = (int)((frame * 5) >> 8);
+		int plx = 0, prx2 = 0, pt = 0, pb = 0, prev = 0;
+		for (i = 0; i <= 12; i++) {
+			int denom = (i << 8) + fr;
+			int baseY, off, lx, rx, h, topY;
+			if (denom < 1) continue;
+			baseY = VW_HORIZON + (110 * 256) / denom;
+			if (baseY > SCREEN_YRES + 20) { prev = 0; continue; }
+			off  = (260 * 256) / denom;
+			if (off > 290) { prev = 0; continue; }   /* too near: clips off-screen */
+			lx   = 160 - off; rx = 160 + off;
+			h    = prof[(i + sc) & 7] * 768 / denom;
+			if (h > 150) h = 150;
+			topY = baseY - h;
+			add_line(lx, baseY, lx, topY, 40, 200, 255, OT_LEN - 3);
+			add_line(rx, baseY, rx, topY, 40, 200, 255, OT_LEN - 3);
+			if (prev) {
+				/* ridge (peaks), foot (base), and a diagonal per panel so the
+				 * wall reads as a triangulated 3D face, not a flat fence */
+				add_line(plx, pt, lx, topY, 70, 220, 255, OT_LEN - 3);
+				add_line(prx2, pt, rx, topY, 70, 220, 255, OT_LEN - 3);
+				add_line(plx, pb, lx, baseY, 24, 84, 150, OT_LEN - 3);
+				add_line(prx2, pb, rx, baseY, 24, 84, 150, OT_LEN - 3);
+				add_line(plx, pt, lx, baseY, 34, 130, 190, OT_LEN - 3);
+				add_line(prx2, pt, rx, baseY, 34, 130, 190, OT_LEN - 3);
+			}
+			plx = lx; prx2 = rx; pt = topY; pb = baseY; prev = 1;
+		}
+	}
+
+	/* road edges (static verticals to the vanishing point) */
+	for (k = -6; k <= 6; k++)
+		add_line(160 + k * 26, SCREEN_YRES, 160, VW_HORIZON, 235, 40, 205, OT_LEN - 4);
+
+	/* floor grid: horizontals scrolling toward the viewer */
+	for (i = 0; i <= 12; i++) {
+		int denom = (i << 8) + fr;
+		int y, b;
+		if (denom < 1) continue;
+		y = VW_HORIZON + (110 * 256) / denom;
+		if (y <= VW_HORIZON || y >= SCREEN_YRES) continue;
+		b = 80 + (y - VW_HORIZON) * 175 / (SCREEN_YRES - VW_HORIZON);
+		add_line(0, y, SCREEN_XRES, y, (uint8_t)b, 38, (uint8_t)(b * 9 / 10), OT_LEN - 4);
+	}
+
+	/* highway centre line: scrolling yellow dashes down the middle */
+	for (i = 0; i <= 12; i++) {
+		int d1 = (i << 8) + fr;
+		int d2 = d1 + 132;
+		int y1, y2;
+		if (d1 < 1) continue;
+		y1 = VW_HORIZON + (110 * 256) / d1;
+		y2 = VW_HORIZON + (110 * 256) / d2;
+		if (y1 > SCREEN_YRES) y1 = SCREEN_YRES;
+		if (y1 <= VW_HORIZON || y2 <= VW_HORIZON) continue;
+		add_line(160, y2, 160, y1, 255, 232, 110, OT_LEN - 4);
+	}
+}
+
 /* ------------------------------------------------------------------ plasma */
 
 static uint8_t pr[PCOLS + 1][PROWS + 1];
@@ -443,6 +580,59 @@ static void draw_wirecube(VECTOR *pos, SVECTOR *rot, int32_t scale,
 	}
 }
 
+/* A flying Windows flag: four solid panes (red/green/blue/yellow) in a 2x2
+ * with a centre gap, tumbling in 3D like the old screensaver. */
+static const SVECTOR flag_pane[4][4] = {
+	{ { -58, -58, 0, 0 }, { -12, -58, 0, 0 }, { -58, -12, 0, 0 }, { -12, -12, 0, 0 } },
+	{ {  12, -58, 0, 0 }, {  58, -58, 0, 0 }, {  12, -12, 0, 0 }, {  58, -12, 0, 0 } },
+	{ { -58,  12, 0, 0 }, { -12,  12, 0, 0 }, { -58,  58, 0, 0 }, { -12,  58, 0, 0 } },
+	{ {  12,  12, 0, 0 }, {  58,  12, 0, 0 }, {  12,  58, 0, 0 }, {  58,  58, 0, 0 } }
+};
+static const uint8_t flag_col[4][3] = {
+	{ 255,  64,  64 },   /* red    */
+	{  80, 220,  96 },   /* green  */
+	{  72, 128, 255 },   /* blue   */
+	{ 255, 208,  72 }    /* yellow */
+};
+
+static void draw_winflag(VECTOR *pos, SVECTOR *rot, int32_t scale, int wph, int amp) {
+	MATRIX m;
+	VECTOR sv = { scale, scale, scale };
+	int    pane, otz, v;
+
+	RotMatrix(rot, &m);
+	ScaleMatrix(&m, &sv);
+	TransMatrix(&m, pos);
+	gte_SetRotMatrix(&m);
+	gte_SetTransMatrix(&m);
+
+	for (pane = 0; pane < 4; pane++) {
+		SVECTOR  c[4];
+		POLY_F4 *p = (POLY_F4 *)db_nextpri;
+		/* ripple the corners in Z so the flag flutters like paper; amp is the
+		 * gust strength passing this flag right now */
+		for (v = 0; v < 4; v++) {
+			c[v] = flag_pane[pane][v];
+			c[v].vz = (short)((isin((c[v].vx * 14 + wph) & 4095) * amp) >> 12);
+		}
+		setPolyF4(p);
+		setRGB0(p, flag_col[pane][0], flag_col[pane][1], flag_col[pane][2]);
+		gte_ldv3(&c[0], &c[1], &c[2]);
+		gte_rtpt();
+		gte_stsxy0(&p->x0);
+		gte_stsxy1(&p->x1);
+		gte_stsxy2(&p->x2);
+		gte_ldv0(&c[3]);
+		gte_rtps();
+		gte_stsxy(&p->x3);
+		gte_avsz4();
+		gte_stotz(&otz);
+		if (otz <= 0 || otz >= OT_LEN) otz = OT_LEN / 2;
+		addPrim(db[db_active].ot + otz, p);
+		db_nextpri = (uint8_t *)(p + 1);
+	}
+}
+
 /* --------------------------------------------------------- SecKC ASCII hex */
 
 /* The SecKC ASCII skull as a spinning, EXTRUDED 3D object. We stack several
@@ -508,6 +698,56 @@ static void draw_seckc_tex(uint32_t frame, int env) {
 	}
 }
 
+/* "SecKC" as a chunky EXTRUDED 3D text logo: every vector-font stroke becomes a
+ * filled beam with a darker back face, gently swung so it stays readable. */
+static void draw_seckc_logo(uint32_t frame, int env) {
+	static const char *word = "SecKC";
+	MATRIX  m;
+	SVECTOR rot;
+	VECTOR  pos = { 0, 0, 360 };
+	int     fp  = isin((frame * 70) & 4095);
+	int32_t scl = ONE + (env << 1) + ((fp < 0 ? -fp : fp) >> 6);
+	VECTOR  sv  = { scl, scl, scl };
+	int     gi, gsz[5], gw[5], total = 0, penx;
+	const int GS = 13, DEPTH = 20;
+
+	rot.vx = (short)(isin(frame * 8) >> 6);
+	rot.vy = (short)(isin(frame * 11) >> 4);   /* gentle readable swing */
+	rot.vz = (short)(isin(frame * 5) >> 8);
+	rot.pad = 0;
+	RotMatrix(&rot, &m);
+	ScaleMatrix(&m, &sv);
+	TransMatrix(&m, &pos);
+	gte_SetRotMatrix(&m);
+	gte_SetTransMatrix(&m);
+
+	for (gi = 0; gi < 5; gi++) {
+		gsz[gi] = (word[gi] >= 'a' && word[gi] <= 'z') ? (GS * 7 / 10) : GS;
+		gw[gi]  = VF_W * gsz[gi] + gsz[gi];
+		total  += gw[gi];
+	}
+	penx = -total / 2;
+
+	for (gi = 0; gi < 5; gi++) {
+		const VGlyph *gl = vglyph(word[gi]);
+		int gs = gsz[gi], s;
+		for (s = 0; s < gl->nseg; s++) {
+			const signed char *sg = gl->seg + s * 4;
+			short ax = (short)(penx + sg[0] * gs), ay = (short)(3 * GS - sg[1] * gs);
+			short bx = (short)(penx + sg[2] * gs), by = (short)(3 * GS - sg[3] * gs);
+			SVECTOR fa = { ax, ay, 0, 0 }, fb = { bx, by, 0, 0 };
+			SVECTOR ba = { ax, ay, DEPTH, 0 }, bb = { bx, by, DEPTH, 0 };
+			DVECTOR pfa, pfb, pba, pbb;
+			project(&fa, &pfa); project(&fb, &pfb);
+			project(&ba, &pba); project(&bb, &pbb);
+			add_fillstroke(pba, pbb, 4, 120, 24, 96, 100);    /* extruded back (magenta) */
+			add_fillstroke(pfa, pfb, 4, 70, 235, 255, 95);    /* bright front (cyan)     */
+		}
+		penx += gw[gi];
+	}
+	(void)env;
+}
+
 /* ---------------------------------------------------------------- scroller */
 
 static const char *GREETZ =
@@ -525,8 +765,8 @@ static const char *GREETZ =
  * far ones. */
 #define S3_ADV    34     /* world units between glyph origins */
 #define S3_SCALE  6      /* world units per font grid unit    */
-#define S3_BASEZ  320    /* base depth                        */
-#define S3_WAVE   90     /* depth wave amplitude              */
+#define S3_BASEZ  340    /* base depth                        */
+#define S3_WAVE   55     /* depth wave amplitude              */
 #define S3_YWAVE  18     /* vertical wave amplitude           */
 #define S3_Y      110    /* baseline world Y (+down)          */
 
@@ -583,12 +823,67 @@ static void draw_scroller(uint32_t frame) {
 						SVECTOR bb = { vbx, vby, (short)(wz + ed), 0 };
 						DVECTOR pba, pbb;
 						project(&ba, &pba); project(&bb, &pbb);
-						add_fillstroke(pba, pbb, wd, 16, (uint8_t)(gg / 3), 50, 3);
+						add_fillstroke(pba, pbb, wd, (uint8_t)(gg / 3), 16, (uint8_t)(gg / 4), 3);
 					}
-					add_fillstroke(pfa, pfb, wd, 40, gg, 120, 2);
+					add_fillstroke(pfa, pfb, wd, (uint8_t)gg, 46, (uint8_t)(gg * 3 / 4), 2);
 				}
 			}
 		}
+	}
+}
+
+static void display(void);
+
+/* Custom boot splash: the SecKC ASCII skull spins up on black with a title,
+ * fading in then out, before the demo proper begins. */
+static void boot_splash(void) {
+	uint32_t f;
+	for (f = 0; f < 160; f++) {
+		int env = (f < 28) ? (int)f * 9 : (f > 128 ? (160 - (int)f) * 8 : 255);
+		MATRIX  m;
+		SVECTOR rot = { 0, 0, 0, 0 };
+		VECTOR  pos = { 0, 0, 300 };
+		VECTOR  sv  = { ONE, ONE, ONE };
+		int     k;
+		uint8_t e;
+		if (env > 255) env = 255;
+		if (env < 0) env = 0;
+		e = (uint8_t)env;
+
+		setRGB0(&db[db_active].draw, 0, 0, 6);
+
+		rot.vx = (short)(isin(f * 7) >> 6);
+		rot.vy = (short)(f * 9);
+		RotMatrix(&rot, &m); ScaleMatrix(&m, &sv); TransMatrix(&m, &pos);
+		gte_SetRotMatrix(&m); gte_SetTransMatrix(&m);
+		for (k = 0; k < TEX_SLICES; k++) {
+			short sz = (short)(-TEX_DEPTH + (2 * TEX_DEPTH * k) / (TEX_SLICES - 1));
+			SVECTOR q[4] = { { -120, -120, sz, 0 }, { 120, -120, sz, 0 },
+			                 { -120, 120, sz, 0 }, { 120, 120, sz, 0 } };
+			uint8_t mod = (uint8_t)(((20 + (26 * k) / (TEX_SLICES - 1)) * env) / 255);
+			POLY_FT4 *pol = (POLY_FT4 *)db_nextpri;
+			int otz;
+			setPolyFT4(pol); setSemiTrans(pol, 1); setRGB0(pol, mod, mod, mod);
+			gte_ldv3(&q[0], &q[1], &q[2]); gte_rtpt();
+			gte_stsxy0(&pol->x0); gte_stsxy1(&pol->x1); gte_stsxy2(&pol->x2);
+			gte_ldv0(&q[3]); gte_rtps(); gte_stsxy(&pol->x3);
+			gte_avsz4(); gte_stotz(&otz);
+			if (otz <= 0 || otz >= OT_LEN) otz = OT_LEN / 2;
+			addPrim(db[db_active].ot + otz, pol);
+			db_nextpri = (uint8_t *)(pol + 1);
+		}
+
+		draw_text2d("SECKC", 160, 198, 4, e, (uint8_t)(e / 4), (uint8_t)(e * 3 / 4), 2);
+		draw_text2d("KANSAS CITY HACKERS", 160, 216, 1,
+		            (uint8_t)(e * 4 / 5), e, e, 2);
+
+		{
+			DR_TPAGE *tp = (DR_TPAGE *)db_nextpri;
+			setDrawTPage(tp, 0, 1, getTPage(0, 1, 0, 0));
+			addPrim(db[db_active].ot + (OT_LEN - 1), tp);
+			db_nextpri = (uint8_t *)(tp + 1);
+		}
+		display();
 	}
 }
 
@@ -601,6 +896,7 @@ int main(void) {
 	uint32_t frame = 0;
 
 	init();
+	boot_splash();
 
 	while (1) {
 		int beat_frame = frame % FPB;
@@ -608,23 +904,31 @@ int main(void) {
 		if (env < 0) env = 0;
 		uint8_t hue = (uint8_t)(frame * 3);
 
+#if VAPORWAVE
+		draw_vaporwave(frame);
+#else
 		rt_render(frame);
 		draw_rt_backdrop();
+#endif
 		draw_starfield();
 
-		/* orbiting wireframe accent cubes */
+		/* flying Windows flags fluttering like paper; a gust sweeps across the
+		 * scene left-to-right so you see it travel from one flag to the next */
 		{
 			int i;
+			int gustx = ((int)(frame * 9) % 1600) - 800;   /* gust front sweeps X */
 			for (i = 0; i < RING_CUBES; i++) {
 				int     a   = (frame * 14) + (i * 4096) / RING_CUBES;
-				int32_t rad = 360 + (env >> 1);
+				int32_t rad = 400;             /* constant orbit: no beat pulse */
 				VECTOR  pos = { (icos(a) * rad) >> 12,
-				                (isin(a) * rad) >> 12, 760 };
-				SVECTOR rot = { (short)(-frame * 20), (short)(frame * 13),
-				                (short)(frame * 8), 0 };
-				uint8_t r, g, b;
-				hsv((uint8_t)(150 + i * 18), 255, 255, &r, &g, &b);
-				draw_wirecube(&pos, &rot, ONE / 3, r, g, b);
+				                (isin(a) * rad) >> 12, 640 };
+				SVECTOR rot = { (short)(isin(frame * 12 + i * 500) >> 4),
+				                (short)(frame * 13 + i * 700),
+				                (short)(frame * 7), 0 };
+				int d   = pos.vx - gustx;
+				int amp = 10 + ((d > -300 && d < 300)
+				                ? (300 - (d < 0 ? -d : d)) * 44 / 300 : 0);
+				draw_winflag(&pos, &rot, ONE, (int)(frame * 40), amp);
 			}
 		}
 
@@ -697,11 +1001,13 @@ static void display(void) {
 	VSync(0);
 
 	/* upload this frame's raytraced image into the VRAM scratch page */
+#if !VAPORWAVE
 	{
 		RECT r = { 512, 0, RM_W, RM_H };
 		LoadImage(&r, (uint32_t *)rmbuf);
 		DrawSync(0);
 	}
+#endif
 
 	PutDrawEnv(&db[db_active].draw);
 	PutDispEnv(&db[db_active].disp);

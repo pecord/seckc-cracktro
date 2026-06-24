@@ -10,25 +10,31 @@ it boots from a real PS1 disc image and runs on actual hardware, the
 
 ## What's in it
 
-- **A real fixed-point raytracer** as the backdrop — analytic ray/sphere
-  intersection, a perspective checker floor, Lambert + specular shading, and a
-  one-bounce floor reflection. No FPU, no GTE: pure 16.16 fixed point with an
-  integer sqrt, rendered to a small texture and upscaled. (Yes, a raytracer. On
-  a 33 MHz R3000.)
+A full synthwave/vaporwave scene running at 60fps:
+
+- **A scrolling neon grid + banded sun** — the classic outrun horizon, with a
+  perspective floor grid and wireframe **canyon walls** that rush toward the
+  camera so it feels like driving through it.
 - **The SecKC ASCII skull** — the group's logo (a skull built from hacker ASCII)
   baked to a green-phosphor texture and rendered as a spinning, **extruded 3D
   slab** that tumbles over the scene.
+- **Flying Windows flags** — the old "Flying Windows" screensaver, tumbling and
+  fluttering like paper as a **wind gust sweeps across the scene**.
 - **A 3D perspective sine-scroller** of greetz — solid filled 3D text on a wave,
   carrying SecKC's creed (*"Destroy No Data / Maintain No Persistence / Above All
   Else Do No Harm"*) and shout-outs to the KC scene.
-- Additive-glow neon wireframe cubes, a warp starfield, and a 110 BPM beat clock
-  driving the pulses.
+- **A custom boot splash** — the skull spins up with a title card before the demo
+  starts (the legit homebrew route; the BIOS logo is license-gated).
+- A warp starfield, an extruded "SecKC" vector-text logo, and a 110 BPM beat clock.
 
-| ASCII skull texture | Extruded skull | 3D filled scroller |
-|---|---|---|
-| ![tex](screenshots/ascii_skull_texture.png) | ![skull](screenshots/skull.png) | ![text](screenshots/3d_text.png) |
+There's also a **hidden fixed-point raytracer** backdrop (analytic ray/sphere on
+a checker floor, Lambert + specular + a one-bounce reflection — no FPU, no GTE,
+just 16.16 fixed point and an integer sqrt). Flip `#define VAPORWAVE 0` in
+`main.c` to swap the synthwave grid for the raytraced scene.
 
-## Performance notes
+![boot splash](screenshots/boot_splash.png)
+
+## Performance notes (raytracer mode)
 
 It's a fill-rate and CPU balancing act. A few tricks that keep it moving:
 

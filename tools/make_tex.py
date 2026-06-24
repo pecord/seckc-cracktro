@@ -55,6 +55,7 @@ img = big.resize((TEX, TEX), Image.LANCZOS)
 px = img.load()
 
 def ramp(i):
+    # green phosphor
     t = i / 15.0
     r = round(12 * t)
     g = round(31 * (0.35 + 0.65 * t))
