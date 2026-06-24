@@ -99,6 +99,26 @@ const pauseBtn = document.getElementById('pause')
 let nostalgist = null
 let paused = false
 
+// The emulator's AudioContext is created inside Nostalgist.launch(), which runs
+// AFTER our awaits — i.e. outside the click's user-gesture — so browsers leave
+// it suspended and we get no sound. Capture every AudioContext and resume it on
+// launch and on any interaction.
+const audioCtxs = []
+const NativeAC = window.AudioContext || window.webkitAudioContext
+if (NativeAC && !NativeAC.__seckcPatched) {
+  const Patched = new Proxy(NativeAC, {
+    construct(Target, args) { const c = new Target(...args); audioCtxs.push(c); return c }
+  })
+  Patched.__seckcPatched = true
+  window.AudioContext = Patched
+  if (window.webkitAudioContext) window.webkitAudioContext = Patched
+}
+function resumeAudio() {
+  for (const c of audioCtxs) if (c.state === 'suspended') c.resume().catch(() => {})
+}
+;['pointerdown', 'keydown', 'touchstart'].forEach(ev =>
+  window.addEventListener(ev, resumeAudio, { passive: true }))
+
 function togglePause() {
   if (!nostalgist) return
   paused = !paused
@@ -116,11 +136,12 @@ btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
-    const V = '045'   // bump to defeat the browser cache when the disc changes
+    const V = '050'   // bump to defeat the browser cache when the disc changes
+    const noStore = { cache: 'no-store' }
     const [cue, bin, bios] = await Promise.all([
-      fetch('rave.cue?v=' + V).then(r => r.arrayBuffer()),
-      fetch('rave.bin?v=' + V).then(r => r.arrayBuffer()),
-      fetch('scph5501.bin').then(r => r.arrayBuffer()),   // OpenBIOS (free)
+      fetch('rave.cue?v=' + V, noStore).then(r => r.arrayBuffer()),
+      fetch('rave.bin?v=' + V, noStore).then(r => r.arrayBuffer()),
+      fetch('scph5501.bin', noStore).then(r => r.arrayBuffer()),   // OpenBIOS (free)
     ])
     status.textContent = 'Loading emulator core + booting…'
     nostalgist = await Nostalgist.launch({
@@ -132,9 +153,16 @@ btn.addEventListener('click', async () => {
       ],
       bios: [{ fileName: 'scph5501.bin', fileContent: new Blob([bios]) }],
       retroarchConfig: { menu_driver: 'null', video_smooth: false },
+      // The option is labelled "CD Audio"/"XA Decoding" but keyed "no...";
+      // "enabled" = ON (the core maps "disabled" -> Config.Cdda=1 = OFF).
+      retroarchCoreConfig: {
+        pcsx_rearmed_nocdaudio: 'enabled',     // CD-DA audio ON
+        pcsx_rearmed_noxadecoding: 'enabled',  // XA decoding ON
+      },
     })
     overlay.style.display = 'none'
     pauseBtn.style.display = 'block'
+    resumeAudio()                 // un-suspend the just-created AudioContext
   } catch (e) {
     btn.style.display = ''
     status.textContent = 'Could not start: ' + (e && e.message ? e.message : e)

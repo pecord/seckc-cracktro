@@ -1157,7 +1157,28 @@ static void init(void) {
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetCommonMasterVolume(0x3fff, 0x3fff);
 	SpuSetCommonCDVolume(0x3fff, 0x3fff);   /* CD-DA -> SPU input (defaults to 0!) */
+
+	/* Set the CD CONTROLLER's audio mixer (a separate volume from the SPU CD
+	 * input above). pcsx_rearmed gates CD audio on this: if these attenuators
+	 * are 0, MixCD() discards CD/XA audio and emits silence. Real hardware /
+	 * DuckStation default it to unity, but older pcsx_rearmed builds (e.g. the
+	 * browser core) leave it at 0 -> no sound. 0x80 = unity, stereo. */
+	{
+		CdlATV mix = { 0x80, 0x00, 0x80, 0x00 };   /* LtoL, LtoR, RtoR, RtoL */
+		CdMix(&mix);
+	}
 	CdControl(CdlDemute, 0, 0);             /* un-mute the CD audio output */
+
+	/* pcsx_rearmed (the browser core) routes SPU register writes only when
+	 * they're addressed via KUSEG (0x1f80_xxxx); the SDK uses KSEG1 (0xbf80_xxxx),
+	 * which it drops. And SpuSetTransferMode clears SPUCNT's SPU/CD-enable bits.
+	 * So re-assert master + CD-input volume and SPU-on + CD-audio-enable through
+	 * KUSEG here. Harmless on real hardware / other emulators. */
+	*(volatile unsigned short *)0x1f801d80 = 0x3fff;  /* SPU master vol L */
+	*(volatile unsigned short *)0x1f801d82 = 0x3fff;  /* SPU master vol R */
+	*(volatile unsigned short *)0x1f801db0 = 0x3fff;  /* SPU CD input vol L */
+	*(volatile unsigned short *)0x1f801db2 = 0x3fff;  /* SPU CD input vol R */
+	*(volatile unsigned short *)0x1f801daa = 0xc001;  /* SPU on + unmute + CD audio enable */
 
 	InitGeom();
 	gte_SetGeomOffset(CENTERX, CENTERY);
