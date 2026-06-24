@@ -79,5 +79,5 @@
 		or MP3 format (using WAV or FLAC is highly recommended to preserve
 		audio quality if you have a lossless copy of the source track).
 	-->
-	<!--<track type="audio" source="${PROJECT_SOURCE_DIR}/track2.wav" />-->
+	<track type="audio" source="${PROJECT_SOURCE_DIR}/music.wav" />
 </iso_project>

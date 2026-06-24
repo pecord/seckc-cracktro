@@ -12,20 +12,23 @@ it boots from a real PS1 disc image and runs on actual hardware, the
 
 A full synthwave/vaporwave scene running at 60fps:
 
+- **An original 150 BPM synthwave track** on **CD-DA** — all synthesized, no
+  samples (detuned-saw pad, sub bass, an arp with tape echo, four-on-the-floor
+  drum machine). The visuals pulse to it. See `tools/make_music.py`.
 - **A scrolling neon grid + banded sun** — the classic outrun horizon, with a
-  perspective floor grid and wireframe **canyon walls** that rush toward the
-  camera so it feels like driving through it.
+  perspective floor grid and a wireframe **heightmap canyon** that rushes toward
+  the camera so it feels like driving through it.
 - **The SecKC ASCII skull** — the group's logo (a skull built from hacker ASCII)
   baked to a green-phosphor texture and rendered as a spinning, **extruded 3D
   slab** that tumbles over the scene.
-- **Flying Windows flags** — the old "Flying Windows" screensaver, tumbling and
-  fluttering like paper as a **wind gust sweeps across the scene**.
+- **Flying Malört bottles** — tumbling through the scene (a Chicago/SecKC
+  in-joke), drawn from a transparent-background texture.
 - **A 3D perspective sine-scroller** of greetz — solid filled 3D text on a wave,
   carrying SecKC's creed (*"Destroy No Data / Maintain No Persistence / Above All
   Else Do No Harm"*) and shout-outs to the KC scene.
 - **A custom boot splash** — the skull spins up with a title card before the demo
   starts (the legit homebrew route; the BIOS logo is license-gated).
-- A warp starfield, an extruded "SecKC" vector-text logo, and a 110 BPM beat clock.
+- A warp starfield and an extruded "SecKC" vector-text logo.
 
 There's also a **hidden fixed-point raytracer** backdrop (analytic ray/sphere on
 a checker floor, Lambert + specular + a one-bounce reflection — no FPU, no GTE,
@@ -58,15 +61,18 @@ Requires [PSn00bSDK](https://github.com/Lameguy64/PSn00bSDK) and a
 export PSN00BSDK_LIBS=/path/to/psn00bsdk/lib/libpsn00b
 export PATH=/path/to/mipsel-none-elf/bin:$PATH
 
+python3 tools/make_music.py        # generates music.wav (needs numpy)
 cmake --preset default
 cmake --build build
 ```
 
-This produces `build/rave.bin` + `build/rave.cue` (a PS1 disc image) and
-`build/rave.exe` (a raw PS-EXE).
+This produces `build/rave.bin` + `build/rave.cue` (a PS1 disc image with the
+CD-DA audio track) and `build/rave.exe` (a raw PS-EXE).
 
-The SecKC skull texture (`seckc.tim`) is checked in, but you can regenerate it
-from the ASCII art with `tools/make_tex.py` (needs Python + Pillow).
+The `music.wav` track is **not** checked in (it's large) — generate it with
+`tools/make_music.py` (needs `numpy`) before the first build; it's deterministic.
+The textures (`seckc.tim`, `bottle.tim`) are checked in but can be regenerated
+with `tools/make_tex.py` / `tools/make_bottle.py` (need Pillow).
 
 ## Run
 

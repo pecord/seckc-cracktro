@@ -1,20 +1,23 @@
 /*
  * rave-psx : a SecKC demoscene cracktro for the MiSTer PSX core.
  *
- *   - synthwave/vaporwave backdrop: scrolling neon grid, banded sun, and
- *     wireframe canyon walls that rush toward the camera
+ *   - synthwave/vaporwave backdrop: scrolling neon grid, banded sun, and a
+ *     wireframe heightmap canyon that rushes toward the camera
  *   - the SecKC ASCII skull as a spinning extruded 3D slab
- *   - flying Windows flags fluttering in a sweeping wind gust
+ *   - flying Malort bottles tumbling through the scene
  *   - a 3D perspective sine-scroller of greetz, and a boot splash
+ *   - original 150 BPM synthwave track on CD-DA (the visuals pulse to it)
  *   - (toggle VAPORWAVE 0 for the fixed-point raytracer backdrop)
  *
- * Built with PSn00bSDK. NTSC 320x240, double buffered, 110 BPM clock.
+ * Built with PSn00bSDK. NTSC 320x240, double buffered.
  */
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <psxgpu.h>
 #include <psxgte.h>
+#include <psxcd.h>
+#include <psxspu.h>
 #include <inline_c.h>
 #include "vecfont.h"
 
@@ -29,7 +32,7 @@
 #define CENTERY     (SCREEN_YRES >> 1)
 #define PROJ        CENTERX                 /* GTE geom screen distance */
 
-#define BPM         110
+#define BPM         150                     /* matches the CD-DA music track */
 #define FPB         ((60 * 60) / BPM)       /* frames/beat @ NTSC 60fps */
 
 /* Plasma grid: 16x12 cells of 20px gouraud quads -> 17x13 vertices. */
@@ -92,6 +95,10 @@ static const uint8_t cube_edges[12][2] = {
 /* SecKC ASCII-skull texture, baked into a TIM and embedded via incbin. */
 extern const uint32_t seckc_tim[];
 static uint16_t tex_tpage, tex_clut;
+
+/* Flying Malort bottle texture (transparent background). */
+extern const uint32_t bottle_tim[];
+static uint16_t bottle_tpage, bottle_clut;
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -419,37 +426,39 @@ static void draw_vaporwave(uint32_t frame) {
 	 * lines rush toward the camera together: it reads as driving through. */
 	fr = 255 - (int)((frame * 5) & 255);
 
-	/* canyon walls: vertical wireframe struts at scrolling depths, jagged
-	 * ridge linking their tops; nearer = wider apart and taller */
+	/* canyon walls as a perspective wireframe HEIGHTMAP: a dense grid mesh on
+	 * each side that climbs steeply away from the road and recedes to the
+	 * horizon (lateral lines = the slope, depth lines = into the screen). */
 	{
-		static const unsigned char prof[8] = { 36, 80, 26, 92, 46, 70, 32, 84 };
+		static const unsigned char nz[16] =
+			{ 8, 30, 14, 38, 4, 26, 18, 34, 10, 40, 6, 28, 16, 36, 12, 22 };
 		int sc = (int)((frame * 5) >> 8);
-		int plx = 0, prx2 = 0, pt = 0, pb = 0, prev = 0;
-		for (i = 0; i <= 12; i++) {
-			int denom = (i << 8) + fr;
-			int baseY, off, lx, rx, h, topY;
-			if (denom < 1) continue;
-			baseY = VW_HORIZON + (110 * 256) / denom;
-			if (baseY > SCREEN_YRES + 20) { prev = 0; continue; }
-			off  = (260 * 256) / denom;
-			if (off > 290) { prev = 0; continue; }   /* too near: clips off-screen */
-			lx   = 160 - off; rx = 160 + off;
-			h    = prof[(i + sc) & 7] * 768 / denom;
-			if (h > 150) h = 150;
-			topY = baseY - h;
-			add_line(lx, baseY, lx, topY, 40, 200, 255, OT_LEN - 3);
-			add_line(rx, baseY, rx, topY, 40, 200, 255, OT_LEN - 3);
-			if (prev) {
-				/* ridge (peaks), foot (base), and a diagonal per panel so the
-				 * wall reads as a triangulated 3D face, not a flat fence */
-				add_line(plx, pt, lx, topY, 70, 220, 255, OT_LEN - 3);
-				add_line(prx2, pt, rx, topY, 70, 220, 255, OT_LEN - 3);
-				add_line(plx, pb, lx, baseY, 24, 84, 150, OT_LEN - 3);
-				add_line(prx2, pb, rx, baseY, 24, 84, 150, OT_LEN - 3);
-				add_line(plx, pt, lx, baseY, 34, 130, 190, OT_LEN - 3);
-				add_line(prx2, pt, rx, baseY, 34, 130, 190, OT_LEN - 3);
+		int side, r, c;
+		for (side = -1; side <= 1; side += 2) {
+			int px[6], py[6], have = 0;
+			for (r = 12; r >= 0; r--) {            /* far row -> near row */
+				int denom = (r << 8) + fr;
+				int cx[6], cy[6];
+				if (denom < 150) { have = 0; continue; }   /* too near: clips */
+				for (c = 0; c < 6; c++) {
+					int worldX = (80 + c * 46) * side;     /* out from road edge */
+					int worldH = c * c * 9 + nz[(c * 5 + r + sc) & 15] * 2;
+					cx[c] = 160 + (worldX * 256) / denom;
+					cy[c] = VW_HORIZON + ((110 * 256) - worldH * 256) / denom;
+				}
+				/* lateral lines up the slope (top edge = ridge, brightest) */
+				for (c = 0; c < 5; c++) {
+					int top = (c == 4);
+					add_line(cx[c], cy[c], cx[c + 1], cy[c + 1],
+					         40, top ? 235 : 120, top ? 255 : 185, OT_LEN - 3);
+				}
+				/* depth lines connecting this row to the farther one */
+				if (have)
+					for (c = 0; c < 6; c++)
+						add_line(px[c], py[c], cx[c], cy[c], 40, 150, 210, OT_LEN - 3);
+				for (c = 0; c < 6; c++) { px[c] = cx[c]; py[c] = cy[c]; }
+				have = 1;
 			}
-			plx = lx; prx2 = rx; pt = topY; pb = baseY; prev = 1;
 		}
 	}
 
@@ -583,10 +592,10 @@ static void draw_wirecube(VECTOR *pos, SVECTOR *rot, int32_t scale,
 /* A flying Windows flag: four solid panes (red/green/blue/yellow) in a 2x2
  * with a centre gap, tumbling in 3D like the old screensaver. */
 static const SVECTOR flag_pane[4][4] = {
-	{ { -58, -58, 0, 0 }, { -12, -58, 0, 0 }, { -58, -12, 0, 0 }, { -12, -12, 0, 0 } },
-	{ {  12, -58, 0, 0 }, {  58, -58, 0, 0 }, {  12, -12, 0, 0 }, {  58, -12, 0, 0 } },
-	{ { -58,  12, 0, 0 }, { -12,  12, 0, 0 }, { -58,  58, 0, 0 }, { -12,  58, 0, 0 } },
-	{ {  12,  12, 0, 0 }, {  58,  12, 0, 0 }, {  12,  58, 0, 0 }, {  58,  58, 0, 0 } }
+	{ { -58, -58, 0, 0 }, { -5, -58, 0, 0 }, { -58, -5, 0, 0 }, { -5, -5, 0, 0 } },
+	{ {   5, -58, 0, 0 }, { 58, -58, 0, 0 }, {   5, -5, 0, 0 }, { 58, -5, 0, 0 } },
+	{ { -58,   5, 0, 0 }, { -5,   5, 0, 0 }, { -58, 58, 0, 0 }, { -5, 58, 0, 0 } },
+	{ {   5,   5, 0, 0 }, { 58,   5, 0, 0 }, {   5, 58, 0, 0 }, { 58, 58, 0, 0 } }
 };
 static const uint8_t flag_col[4][3] = {
 	{ 255,  64,  64 },   /* red    */
@@ -631,6 +640,45 @@ static void draw_winflag(VECTOR *pos, SVECTOR *rot, int32_t scale, int wph, int 
 		addPrim(db[db_active].ot + otz, p);
 		db_nextpri = (uint8_t *)(p + 1);
 	}
+}
+
+/* A flying Malort bottle: a textured quad (transparent background) tumbling in
+ * 3D where the Windows flags used to be. */
+static void draw_bottle(VECTOR *pos, SVECTOR *rot, int32_t scale) {
+	static const SVECTOR q[4] = {
+		{ -48, -96, 0, 0 }, { 48, -96, 0, 0 },
+		{ -48,  96, 0, 0 }, { 48,  96, 0, 0 }
+	};
+	MATRIX    m;
+	VECTOR    sv = { scale, scale, scale };
+	POLY_FT4 *p;
+	int       otz;
+
+	RotMatrix(rot, &m);
+	ScaleMatrix(&m, &sv);
+	TransMatrix(&m, pos);
+	gte_SetRotMatrix(&m);
+	gte_SetTransMatrix(&m);
+
+	p = (POLY_FT4 *)db_nextpri;
+	setPolyFT4(p);
+	setRGB0(p, 128, 128, 128);
+	gte_ldv3(&q[0], &q[1], &q[2]);
+	gte_rtpt();
+	gte_stsxy0(&p->x0);
+	gte_stsxy1(&p->x1);
+	gte_stsxy2(&p->x2);
+	gte_ldv0(&q[3]);
+	gte_rtps();
+	gte_stsxy(&p->x3);
+	gte_avsz4();
+	gte_stotz(&otz);
+	setUV4(p, 0, 0, 63, 0, 0, 127, 63, 127);
+	p->tpage = bottle_tpage;
+	p->clut  = bottle_clut;
+	if (otz <= 0 || otz >= OT_LEN) otz = OT_LEN / 2;
+	addPrim(db[db_active].ot + otz, p);
+	db_nextpri = (uint8_t *)(p + 1);
 }
 
 /* --------------------------------------------------------- SecKC ASCII hex */
@@ -898,6 +946,13 @@ int main(void) {
 	init();
 	boot_splash();
 
+	/* kick off the CD-DA music track (2), so it starts with the demo */
+	{
+		uint8_t mode = CdlModeDA | CdlModeRept, track = 2;
+		CdControl(CdlSetmode, &mode, 0);
+		CdControl(CdlPlay, &track, 0);
+	}
+
 	while (1) {
 		int beat_frame = frame % FPB;
 		int env        = 255 - ((beat_frame * 255) / FPB);
@@ -912,23 +967,18 @@ int main(void) {
 #endif
 		draw_starfield();
 
-		/* flying Windows flags fluttering like paper; a gust sweeps across the
-		 * scene left-to-right so you see it travel from one flag to the next */
+		/* flying Malort bottles tumbling through the scene */
 		{
 			int i;
-			int gustx = ((int)(frame * 9) % 1600) - 800;   /* gust front sweeps X */
 			for (i = 0; i < RING_CUBES; i++) {
 				int     a   = (frame * 14) + (i * 4096) / RING_CUBES;
-				int32_t rad = 400;             /* constant orbit: no beat pulse */
+				int32_t rad = 400;             /* constant orbit */
 				VECTOR  pos = { (icos(a) * rad) >> 12,
 				                (isin(a) * rad) >> 12, 640 };
-				SVECTOR rot = { (short)(isin(frame * 12 + i * 500) >> 4),
-				                (short)(frame * 13 + i * 700),
-				                (short)(frame * 7), 0 };
-				int d   = pos.vx - gustx;
-				int amp = 10 + ((d > -300 && d < 300)
-				                ? (300 - (d < 0 ? -d : d)) * 44 / 300 : 0);
-				draw_winflag(&pos, &rot, ONE, (int)(frame * 40), amp);
+				SVECTOR rot = { (short)(isin(frame * 9 + i * 500) >> 5),
+				                (short)(frame * 8 + i * 700),
+				                (short)(isin(frame * 6 + i * 300) >> 6), 0 };
+				draw_bottle(&pos, &rot, ONE);
 			}
 		}
 
@@ -941,6 +991,16 @@ int main(void) {
 			setDrawTPage(tp, 0, 1, getTPage(0, 1, 0, 0));
 			addPrim(db[db_active].ot + (OT_LEN - 1), tp);
 			db_nextpri = (uint8_t *)(tp + 1);
+		}
+
+		/* loop the music: when the track has finished, play it again */
+		if (frame > 90 && (frame % 30) == 0) {
+			uint8_t res[16];
+			CdControl(CdlNop, 0, res);
+			if (!(res[0] & CdlStatPlay)) {
+				uint8_t track = 2;
+				CdControl(CdlPlay, &track, 0);
+			}
 		}
 
 		(void)hue;
@@ -973,6 +1033,12 @@ static void init(void) {
 	srand(0x5ecc);
 	{ int i; for (i = 0; i < NSTARS; i++) star_reset(i); }
 
+	CdInit();
+	SpuInit();
+	SpuSetCommonMasterVolume(0x3fff, 0x3fff);
+	SpuSetCommonCDVolume(0x3fff, 0x3fff);   /* CD-DA -> SPU input (defaults to 0!) */
+	CdControl(CdlDemute, 0, 0);             /* un-mute the CD audio output */
+
 	InitGeom();
 	gte_SetGeomOffset(CENTERX, CENTERY);
 	gte_SetGeomScreen(PROJ);
@@ -987,6 +1053,17 @@ static void init(void) {
 		DrawSync(0);
 		tex_tpage = getTPage(tim.mode & 0x3, 1, tim.prect->x, tim.prect->y);
 		tex_clut  = getClut(tim.crect->x, tim.crect->y);
+	}
+
+	/* Malort bottle texture (VRAM x=448, clear of the skull at x320). */
+	{
+		TIM_IMAGE tim;
+		GetTimInfo(bottle_tim, &tim);
+		LoadImage(tim.crect, tim.caddr);
+		LoadImage(tim.prect, tim.paddr);
+		DrawSync(0);
+		bottle_tpage = getTPage(tim.mode & 0x3, 0, tim.prect->x, tim.prect->y);
+		bottle_clut  = getClut(tim.crect->x, tim.crect->y);
 	}
 
 	/* 16bpp scratch page for the raytracer output (VRAM x=512, clear of the

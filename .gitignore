@@ -8,5 +8,8 @@ build/
 # local working notes / iteration renders
 inspiration/
 
+# generated audio (large; regenerate with tools/make_music.py)
+music.wav
+
 # os
 .DS_Store

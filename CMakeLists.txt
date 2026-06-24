@@ -10,6 +10,7 @@ project(
 psn00bsdk_add_executable(rave GPREL main.c)
 
 psn00bsdk_target_incbin(rave PRIVATE seckc_tim seckc.tim)
+psn00bsdk_target_incbin(rave PRIVATE bottle_tim bottle.tim)
 
 psn00bsdk_add_cd_image(
 	iso      # CD image target
