@@ -105,23 +105,48 @@ extern const uint32_t dvd_tim[];
 static uint16_t dvd_tpage, dvd_clut;
 
 /* The SPU continuously captures the live CD-DA audio into SPU RAM (left channel
- * at 0x000). We read it each frame and take the peak as a VU level, so the
- * skull reacts to whatever music is actually playing. */
+ * at 0x000). We DMA a slice out and take its peak as a VU level so the skull
+ * reacts to the music.
+ *
+ * IMPORTANT: never busy-wait the transfer. A per-frame
+ * SpuIsTransferCompleted(SPU_TRANSFER_WAIT) is microseconds on real hardware
+ * but pcsx_rearmed (the browser core) models it slowly enough to drop the demo
+ * to ~1 fps. Instead we kick the read off on one frame and harvest it the next
+ * with a NON-BLOCKING poll. And if the host doesn't emulate SPU capture at all
+ * (peak stays pinned near zero), we fall back to a synthetic tempo pulse so the
+ * skull still moves. */
 static uint32_t spu_cap[128];          /* 512 bytes = 256 samples */
 static int      g_vu = 0;
 
-static int audio_level(void) {
+static int audio_level(uint32_t frame) {
+	static int pending = 0, have_real = 0, last = 0;
 	const int16_t *s = (const int16_t *)spu_cap;
-	int i, peak = 0, n = (int)(sizeof(spu_cap) / 2);
-	SpuSetTransferStartAddr(0x0000);
-	SpuRead(spu_cap, sizeof(spu_cap));
-	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
-	for (i = 0; i < n; i++) {
-		int a = s[i];
-		if (a < 0) a = -a;
-		if (a > peak) peak = a;
+
+	if (pending && SpuIsTransferCompleted(SPU_TRANSFER_PEEK)) {
+		int i, peak = 0, n = (int)(sizeof(spu_cap) / 2);
+		for (i = 0; i < n; i++) {
+			int a = s[i];
+			if (a < 0) a = -a;
+			if (a > peak) peak = a;
+		}
+		pending = 0;
+		last = peak;
+		if (peak > 64) have_real = 1;     /* genuine capture is working */
 	}
-	return peak;                       /* 0..32767 */
+	if (!pending) {                        /* kick the next read, don't wait */
+		SpuSetTransferStartAddr(0x0000);
+		SpuRead(spu_cap, sizeof(spu_cap));
+		pending = 1;
+	}
+
+	if (have_real)
+		return last;                       /* 0..32767, real audio peak */
+
+	/* fallback: a punchy four-on-the-floor-ish pulse (~150 BPM at 60 fps) */
+	{
+		int ph = (int)(frame % 24);
+		return (ph < 7) ? (32000 - ph * 4000) : 4500;
+	}
 }
 
 /* ----------------------------------------------------------------- helpers */
@@ -1019,7 +1044,7 @@ int main(void) {
 	while (1) {
 		/* VU meter: drive the pulse from the live audio peak (fast attack,
 		 * slow decay) so the visuals react to whatever music is playing */
-		int lvl = audio_level();              /* 0..32767 */
+		int lvl = audio_level(frame);         /* 0..32767 */
 		int target = lvl >> 6;                /* 0..255-ish */
 		int env;
 		uint8_t hue = (uint8_t)(frame * 3);
