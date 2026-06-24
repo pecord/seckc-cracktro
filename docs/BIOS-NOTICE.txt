@@ -1,0 +1,6 @@
+scph5501.bin in this folder is NOT Sony's PlayStation BIOS.
+
+It is OpenBIOS — the free, open-source PlayStation BIOS replacement from the
+PCSX-Redux project (https://github.com/grumpycoders/pcsx-redux). It is named
+scph5501.bin only so the pcsx_rearmed libretro core locates it. No copyrighted
+Sony firmware is distributed here.

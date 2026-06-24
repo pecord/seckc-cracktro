@@ -13,3 +13,6 @@ music.wav
 
 # os
 .DS_Store
+
+# local dev config
+.claude/

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecKC Cracktro — PSX demo in your browser</title>
+<meta name="description" content="A SecKC demoscene cracktro for the original PlayStation, running in your browser.">
+<style>
+  :root{ --cy:#1ef0ff; --mg:#ff2bd6; --pu:#8a5cff; --bg0:#1a0a2e; --bg1:#2d0b46; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; }
+  body{
+    background:linear-gradient(160deg,#10081f 0%,var(--bg0) 40%,var(--bg1) 100%);
+    color:#eafcff; font-family:'Courier New',monospace; min-height:100%;
+    display:flex; flex-direction:column; align-items:center; padding:24px 16px 48px;
+  }
+  h1{ margin:.2em 0 0; font-size:clamp(28px,6vw,54px); letter-spacing:2px;
+      color:var(--cy); text-shadow:0 0 12px rgba(30,240,255,.5),3px 3px 0 var(--mg); }
+  .sub{ color:var(--mg); margin:.3em 0 1.2em; letter-spacing:3px; font-size:14px; }
+  #stage{
+    width:min(92vw,768px); aspect-ratio:4/3; background:#000;
+    border:2px solid var(--cy); border-radius:10px; position:relative; overflow:hidden;
+    box-shadow:0 0 24px rgba(138,92,255,.5);
+  }
+  #stage canvas{ width:100%!important; height:100%!important; display:block!important;
+                 image-rendering:pixelated; background:#000; }
+  #overlay{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px; text-align:center; padding:16px;
+    background:radial-gradient(circle at 50% 40%,rgba(45,11,70,.4),rgba(0,0,0,.85));
+  }
+  #play{
+    font-family:inherit; font-size:20px; font-weight:bold; letter-spacing:2px;
+    color:#06121a; background:var(--cy); border:0; border-radius:8px;
+    padding:14px 30px; cursor:pointer; box-shadow:0 0 18px rgba(30,240,255,.6);
+  }
+  #play:hover{ background:#fff; }
+  #status{ color:var(--cy); font-size:14px; min-height:1.4em; }
+  .hint{ color:#b69adf; font-size:12px; max-width:46ch; line-height:1.6; }
+  .links{ margin-top:22px; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
+  .links a{
+    color:var(--cy); text-decoration:none; border:1px solid var(--pu);
+    border-radius:6px; padding:8px 14px; font-size:13px;
+  }
+  .links a:hover{ background:var(--pu); color:#fff; }
+  footer{ color:#8a6fb0; font-size:11px; margin-top:26px; max-width:60ch;
+          text-align:center; line-height:1.6; }
+</style>
+</head>
+<body>
+  <h1>SecKC&nbsp;Cracktro</h1>
+  <div class="sub">// A PLAYSTATION DEMO, IN YOUR BROWSER //</div>
+
+  <div id="stage">
+    <canvas id="screen" width="320" height="240"></canvas>
+    <div id="overlay">
+      <button id="play">▶ &nbsp;PLAY IN BROWSER</button>
+      <div id="status"></div>
+      <div class="hint">Emulated on a WebAssembly PlayStation core (no BIOS or
+        downloads needed). It's a non-interactive demo — just sit back. Turn up
+        the sound 🔊</div>
+    </div>
+  </div>
+
+  <div class="links">
+    <a href="https://github.com/pecord/seckc-cracktro">Source on GitHub</a>
+    <a href="https://github.com/pecord/seckc-cracktro/releases/latest">Download for real hardware / MiSTer</a>
+    <a href="https://www.seckc.org">SecKC.org</a>
+  </div>
+
+  <footer>
+    Unofficial fan tribute to <a href="https://www.seckc.org" style="color:#b69adf">SecKC</a>,
+    Kansas City's hacker meetup. Built with PSn00bSDK; original music. Runs via
+    <a href="https://nostalgist.js.org/" style="color:#b69adf">Nostalgist.js</a> +
+    the pcsx_rearmed libretro core.
+  </footer>
+
+<script type="module">
+import { Nostalgist } from 'https://cdn.jsdelivr.net/npm/nostalgist/+esm'
+
+const btn = document.getElementById('play')
+const status = document.getElementById('status')
+const overlay = document.getElementById('overlay')
+const canvas = document.getElementById('screen')
+
+btn.addEventListener('click', async () => {
+  btn.style.display = 'none'
+  status.textContent = 'Fetching disc image…'
+  try {
+    const [cue, bin, bios] = await Promise.all([
+      fetch('rave.cue').then(r => r.arrayBuffer()),
+      fetch('rave.bin').then(r => r.arrayBuffer()),
+      fetch('scph5501.bin').then(r => r.arrayBuffer()),   // OpenBIOS (free)
+    ])
+    status.textContent = 'Loading emulator core + booting…'
+    await Nostalgist.launch({
+      core: 'pcsx_rearmed',
+      element: canvas,
+      rom: [
+        { fileName: 'rave.cue', fileContent: new Blob([cue]) },
+        { fileName: 'rave.bin', fileContent: new Blob([bin]) },
+      ],
+      bios: [{ fileName: 'scph5501.bin', fileContent: new Blob([bios]) }],
+      retroarchConfig: { menu_driver: 'null', video_smooth: false },
+    })
+    overlay.style.display = 'none'
+  } catch (e) {
+    btn.style.display = ''
+    status.textContent = 'Could not start: ' + (e && e.message ? e.message : e)
+    console.error(e)
+  }
+})
+</script>
+</body>
+</html>

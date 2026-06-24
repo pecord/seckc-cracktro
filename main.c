@@ -100,6 +100,30 @@ static uint16_t tex_tpage, tex_clut;
 extern const uint32_t bottle_tim[];
 static uint16_t bottle_tpage, bottle_clut;
 
+/* Bouncing DVD logo texture (white/tintable, transparent background). */
+extern const uint32_t dvd_tim[];
+static uint16_t dvd_tpage, dvd_clut;
+
+/* The SPU continuously captures the live CD-DA audio into SPU RAM (left channel
+ * at 0x000). We read it each frame and take the peak as a VU level, so the
+ * skull reacts to whatever music is actually playing. */
+static uint32_t spu_cap[128];          /* 512 bytes = 256 samples */
+static int      g_vu = 0;
+
+static int audio_level(void) {
+	const int16_t *s = (const int16_t *)spu_cap;
+	int i, peak = 0, n = (int)(sizeof(spu_cap) / 2);
+	SpuSetTransferStartAddr(0x0000);
+	SpuRead(spu_cap, sizeof(spu_cap));
+	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+	for (i = 0; i < n; i++) {
+		int a = s[i];
+		if (a < 0) a = -a;
+		if (a > peak) peak = a;
+	}
+	return peak;                       /* 0..32767 */
+}
+
 /* ----------------------------------------------------------------- helpers */
 
 /* cheap HSV->RGB, h/s/v in 0..255 */
@@ -642,17 +666,20 @@ static void draw_winflag(VECTOR *pos, SVECTOR *rot, int32_t scale, int wph, int 
 	}
 }
 
-/* A flying Malort bottle: a textured quad (transparent background) tumbling in
- * 3D where the Windows flags used to be. */
+/* A flying Malort bottle. Faked into 3D with CROSSED BILLBOARDS: the same
+ * texture on two quads at 90 degrees, so as it spins around its vertical axis
+ * one face is always toward the camera and it never collapses to a flat line.
+ * (A bottle is ~rotationally symmetric, so the silhouette stays consistent.) */
 static void draw_bottle(VECTOR *pos, SVECTOR *rot, int32_t scale) {
-	static const SVECTOR q[4] = {
-		{ -48, -96, 0, 0 }, { 48, -96, 0, 0 },
-		{ -48,  96, 0, 0 }, { 48,  96, 0, 0 }
+	static const SVECTOR quads[2][4] = {
+		{ { -48, -96, 0, 0 }, { 48, -96, 0, 0 },        /* facing +Z */
+		  { -48,  96, 0, 0 }, { 48,  96, 0, 0 } },
+		{ { 0, -96, -48, 0 }, { 0, -96, 48, 0 },        /* facing +X (perp.) */
+		  { 0,  96, -48, 0 }, { 0,  96, 48, 0 } }
 	};
-	MATRIX    m;
-	VECTOR    sv = { scale, scale, scale };
-	POLY_FT4 *p;
-	int       otz;
+	MATRIX m;
+	VECTOR sv = { scale, scale, scale };
+	int    q, otz;
 
 	RotMatrix(rot, &m);
 	ScaleMatrix(&m, &sv);
@@ -660,24 +687,60 @@ static void draw_bottle(VECTOR *pos, SVECTOR *rot, int32_t scale) {
 	gte_SetRotMatrix(&m);
 	gte_SetTransMatrix(&m);
 
+	for (q = 0; q < 2; q++) {
+		const SVECTOR *v = quads[q];
+		POLY_FT4 *p = (POLY_FT4 *)db_nextpri;
+		setPolyFT4(p);
+		setRGB0(p, 128, 128, 128);
+		gte_ldv3(&v[0], &v[1], &v[2]);
+		gte_rtpt();
+		gte_stsxy0(&p->x0);
+		gte_stsxy1(&p->x1);
+		gte_stsxy2(&p->x2);
+		gte_ldv0(&v[3]);
+		gte_rtps();
+		gte_stsxy(&p->x3);
+		gte_avsz4();
+		gte_stotz(&otz);
+		setUV4(p, 0, 0, 63, 0, 0, 127, 63, 127);
+		p->tpage = bottle_tpage;
+		p->clut  = bottle_clut;
+		if (otz <= 0 || otz >= OT_LEN) otz = OT_LEN / 2;
+		addPrim(db[db_active].ot + otz, p);
+		db_nextpri = (uint8_t *)(p + 1);
+	}
+}
+
+/* The DVD screensaver logo, bouncing around the background and changing to a
+ * new neon colour on every wall hit. */
+#define DVD_W 64
+#define DVD_H 32
+static void draw_dvd(void) {
+	static const uint8_t cols[6][3] = {
+		{  40, 240, 255 },   /* cyan    */
+		{ 255,  60, 200 },   /* magenta */
+		{ 150,  80, 255 },   /* purple  */
+		{ 255, 100, 150 },   /* hot pink*/
+		{ 255, 220,  90 },   /* gold    */
+		{  90, 255, 160 }    /* mint    */
+	};
+	static int x = 40, y = 70, vx = 2, vy = 1, ci = 0;
+	POLY_FT4 *p;
+
+	x += vx; y += vy;
+	if (x <= 0)               { x = 0; vx = -vx; ci = (ci + 1) % 6; }
+	if (x >= SCREEN_XRES - DVD_W) { x = SCREEN_XRES - DVD_W; vx = -vx; ci = (ci + 1) % 6; }
+	if (y <= 0)               { y = 0; vy = -vy; ci = (ci + 1) % 6; }
+	if (y >= SCREEN_YRES - DVD_H) { y = SCREEN_YRES - DVD_H; vy = -vy; ci = (ci + 1) % 6; }
+
 	p = (POLY_FT4 *)db_nextpri;
 	setPolyFT4(p);
-	setRGB0(p, 128, 128, 128);
-	gte_ldv3(&q[0], &q[1], &q[2]);
-	gte_rtpt();
-	gte_stsxy0(&p->x0);
-	gte_stsxy1(&p->x1);
-	gte_stsxy2(&p->x2);
-	gte_ldv0(&q[3]);
-	gte_rtps();
-	gte_stsxy(&p->x3);
-	gte_avsz4();
-	gte_stotz(&otz);
-	setUV4(p, 0, 0, 63, 0, 0, 127, 63, 127);
-	p->tpage = bottle_tpage;
-	p->clut  = bottle_clut;
-	if (otz <= 0 || otz >= OT_LEN) otz = OT_LEN / 2;
-	addPrim(db[db_active].ot + otz, p);
+	setRGB0(p, cols[ci][0], cols[ci][1], cols[ci][2]);   /* tint the white logo */
+	setXY4(p, x, y, x + DVD_W, y, x, y + DVD_H, x + DVD_W, y + DVD_H);
+	setUV4(p, 0, 0, DVD_W - 1, 0, 0, DVD_H - 1, DVD_W - 1, DVD_H - 1);
+	p->tpage = dvd_tpage;
+	p->clut  = dvd_clut;
+	addPrim(db[db_active].ot + (OT_LEN - 5), p);   /* background layer */
 	db_nextpri = (uint8_t *)(p + 1);
 }
 
@@ -717,7 +780,7 @@ static void draw_seckc_tex(uint32_t frame, int env) {
 			{ -120, -120, sz, 0 }, {  120, -120, sz, 0 },
 			{ -120,  120, sz, 0 }, {  120,  120, sz, 0 }
 		};
-		uint8_t mod = (uint8_t)(20 + (26 * k) / (TEX_SLICES - 1));
+		uint8_t mod = (uint8_t)(20 + (26 * k) / (TEX_SLICES - 1) + (env >> 3));
 		POLY_FT4 *pol = (POLY_FT4 *)db_nextpri;
 		int otz;
 
@@ -954,10 +1017,16 @@ int main(void) {
 	}
 
 	while (1) {
-		int beat_frame = frame % FPB;
-		int env        = 255 - ((beat_frame * 255) / FPB);
-		if (env < 0) env = 0;
+		/* VU meter: drive the pulse from the live audio peak (fast attack,
+		 * slow decay) so the visuals react to whatever music is playing */
+		int lvl = audio_level();              /* 0..32767 */
+		int target = lvl >> 6;                /* 0..255-ish */
+		int env;
 		uint8_t hue = (uint8_t)(frame * 3);
+		if (target > 255) target = 255;
+		if (target > g_vu) g_vu = target;             /* attack */
+		else g_vu -= (g_vu - target) >> 2;            /* decay  */
+		env = g_vu;
 
 #if VAPORWAVE
 		draw_vaporwave(frame);
@@ -966,6 +1035,7 @@ int main(void) {
 		draw_rt_backdrop();
 #endif
 		draw_starfield();
+		draw_dvd();
 
 		/* flying Malort bottles tumbling through the scene */
 		{
@@ -1035,6 +1105,7 @@ static void init(void) {
 
 	CdInit();
 	SpuInit();
+	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetCommonMasterVolume(0x3fff, 0x3fff);
 	SpuSetCommonCDVolume(0x3fff, 0x3fff);   /* CD-DA -> SPU input (defaults to 0!) */
 	CdControl(CdlDemute, 0, 0);             /* un-mute the CD audio output */
@@ -1064,6 +1135,17 @@ static void init(void) {
 		DrawSync(0);
 		bottle_tpage = getTPage(tim.mode & 0x3, 0, tim.prect->x, tim.prect->y);
 		bottle_clut  = getClut(tim.crect->x, tim.crect->y);
+	}
+
+	/* DVD logo texture (VRAM x=512, y=256 — its own page). */
+	{
+		TIM_IMAGE tim;
+		GetTimInfo(dvd_tim, &tim);
+		LoadImage(tim.crect, tim.caddr);
+		LoadImage(tim.prect, tim.paddr);
+		DrawSync(0);
+		dvd_tpage = getTPage(tim.mode & 0x3, 0, tim.prect->x, tim.prect->y);
+		dvd_clut  = getClut(tim.crect->x, tim.crect->y);
 	}
 
 	/* 16bpp scratch page for the raytracer output (VRAM x=512, clear of the

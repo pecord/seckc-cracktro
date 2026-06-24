@@ -8,13 +8,20 @@ it boots from a real PS1 disc image and runs on actual hardware, the
 
 ![hero](screenshots/hero.png)
 
+### ▶ [Play it in your browser](https://pecord.github.io/seckc-cracktro/)
+
+No download, no BIOS — it runs on a WebAssembly PlayStation core (pcsx_rearmed +
+[OpenBIOS](https://github.com/grumpycoders/pcsx-redux)) via
+[Nostalgist.js](https://nostalgist.js.org/).
+
 ## What's in it
 
 A full synthwave/vaporwave scene running at 60fps:
 
-- **An original 150 BPM synthwave track** on **CD-DA** — all synthesized, no
-  samples (detuned-saw pad, sub bass, an arp with tape echo, four-on-the-floor
-  drum machine). The visuals pulse to it. See `tools/make_music.py`.
+- **A synthwave soundtrack** on **CD-DA**, with the visuals reacting to it: the
+  skull is an **audio VU meter** — it reads the live audio off the SPU capture
+  buffer each frame and scales/glows with the music. (The source tree builds an
+  original, all-synthesized track via `tools/make_music.py`.)
 - **A scrolling neon grid + banded sun** — the classic outrun horizon, with a
   perspective floor grid and a wireframe **heightmap canyon** that rushes toward
   the camera so it feels like driving through it.
@@ -22,13 +29,13 @@ A full synthwave/vaporwave scene running at 60fps:
   baked to a green-phosphor texture and rendered as a spinning, **extruded 3D
   slab** that tumbles over the scene.
 - **Flying Malört bottles** — tumbling through the scene (a Chicago/SecKC
-  in-joke), drawn from a transparent-background texture.
+  in-joke). Faked into 3D with **crossed billboards** so they never go flat.
+- **A bouncing DVD-screensaver logo** — drifting in the background, flipping to a
+  new neon colour on every wall hit.
 - **A 3D perspective sine-scroller** of greetz — solid filled 3D text on a wave,
   carrying SecKC's creed (*"Destroy No Data / Maintain No Persistence / Above All
   Else Do No Harm"*) and shout-outs to the KC scene.
-- **A custom boot splash** — the skull spins up with a title card before the demo
-  starts (the legit homebrew route; the BIOS logo is license-gated).
-- A warp starfield and an extruded "SecKC" vector-text logo.
+- **A custom boot splash**, a warp starfield, and an extruded "SecKC" vector logo.
 
 There's also a **hidden fixed-point raytracer** backdrop (analytic ray/sphere on
 a checker floor, Lambert + specular + a one-bounce reflection — no FPU, no GTE,
