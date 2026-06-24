@@ -61,23 +61,12 @@
 		<directory_tree>
 			<file name="SYSTEM.CNF"		type="data" source="${PROJECT_SOURCE_DIR}/system.cnf" />
 			<file name="RAVE.EXE"	type="data" source="rave.exe" />
-			<!--
-				This file is only required if you are using dynamic linking
-				(see the system/dynlink example). It contains the executable's
-				symbol map and can be used to obtain the address of a function
-				or global variable by its name.
-			-->
-			<!--<file name="TEMPLATE.MAP"	type="data" source="template.map" />-->
 
 			<dummy sectors="1024"/>
 		</directory_tree>
 	</track>
 
-	<!--
-		CD-DA tracks can be added to the CD image by using one or more <track>
-		tags. The source attribute must be a path to an audio file in WAV, FLAC
-		or MP3 format (using WAV or FLAC is highly recommended to preserve
-		audio quality if you have a lossless copy of the source track).
-	-->
-	<track type="audio" source="${PROJECT_SOURCE_DIR}/music.wav" />
+	<!-- Soundtrack as a Red Book CD-DA track (track 2), trimmed to a short
+	     seamless loop by tools/make_loop.py to keep the disc small. -->
+	<track type="audio" source="${PROJECT_SOURCE_DIR}/music_loop.wav" />
 </iso_project>

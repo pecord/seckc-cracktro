@@ -35,6 +35,19 @@
 #define BPM         150                     /* matches the CD-DA music track */
 #define FPB         ((60 * 60) / BPM)       /* frames/beat @ NTSC 60fps */
 
+/* --- perf bisect toggles (override with -DPERF_*=0) --- */
+#ifndef PERF_CDDA
+#define PERF_CDDA       1   /* CD-DA music playback (CdlPlay) */
+#endif
+#ifndef PERF_VU_CAPTURE
+#define PERF_VU_CAPTURE 0   /* per-frame SpuRead pins pcsx_rearmed to its slow SPU
+                            * path (~1fps in browser); synthetic pulse instead.
+                            * Build -DPERF_VU_CAPTURE=1 for live capture on HW. */
+#endif
+#ifndef PERF_BG
+#define PERF_BG         1   /* full-screen backdrop overdraw + additive blend */
+#endif
+
 /* Plasma grid: 16x12 cells of 20px gouraud quads -> 17x13 vertices. */
 #define PCOLS       16
 #define PROWS       12
@@ -119,6 +132,7 @@ static uint32_t spu_cap[128];          /* 512 bytes = 256 samples */
 static int      g_vu = 0;
 
 static int audio_level(uint32_t frame) {
+#if PERF_VU_CAPTURE
 	static int pending = 0, have_real = 0, last = 0;
 	const int16_t *s = (const int16_t *)spu_cap;
 
@@ -141,8 +155,10 @@ static int audio_level(uint32_t frame) {
 
 	if (have_real)
 		return last;                       /* 0..32767, real audio peak */
+#endif
 
-	/* fallback: a punchy four-on-the-floor-ish pulse (~150 BPM at 60 fps) */
+	/* fallback: a punchy four-on-the-floor-ish pulse (~150 BPM at 60 fps).
+	 * Also the only path when PERF_AUDIO is bisected off. */
 	{
 		int ph = (int)(frame % 24);
 		return (ph < 7) ? (32000 - ph * 4000) : 4500;
@@ -1034,12 +1050,14 @@ int main(void) {
 	init();
 	boot_splash();
 
-	/* kick off the CD-DA music track (2), so it starts with the demo */
+	/* kick off the CD-DA music track (2), looping (CdlModeRept) */
+#if PERF_CDDA
 	{
 		uint8_t mode = CdlModeDA | CdlModeRept, track = 2;
 		CdControl(CdlSetmode, &mode, 0);
 		CdControl(CdlPlay, &track, 0);
 	}
+#endif
 
 	while (1) {
 		/* VU meter: drive the pulse from the live audio peak (fast attack,
@@ -1053,11 +1071,13 @@ int main(void) {
 		else g_vu -= (g_vu - target) >> 2;            /* decay  */
 		env = g_vu;
 
+#if PERF_BG
 #if VAPORWAVE
 		draw_vaporwave(frame);
 #else
 		rt_render(frame);
 		draw_rt_backdrop();
+#endif
 #endif
 		draw_starfield();
 		draw_dvd();
@@ -1081,15 +1101,18 @@ int main(void) {
 		draw_scroller(frame);
 
 		/* additive blend mode for every semi-transparent prim this frame */
+#if PERF_BG
 		{
 			DR_TPAGE *tp = (DR_TPAGE *)db_nextpri;
 			setDrawTPage(tp, 0, 1, getTPage(0, 1, 0, 0));
 			addPrim(db[db_active].ot + (OT_LEN - 1), tp);
 			db_nextpri = (uint8_t *)(tp + 1);
 		}
+#endif
 
-		/* loop the music: when the track has finished, play it again */
-		if (frame > 90 && (frame % 30) == 0) {
+		/* re-trigger the CD-DA track if repeat ever drops it (cheap status poll) */
+#if PERF_CDDA
+		if (frame > 90 && (frame % 60) == 0) {
 			uint8_t res[16];
 			CdControl(CdlNop, 0, res);
 			if (!(res[0] & CdlStatPlay)) {
@@ -1097,6 +1120,7 @@ int main(void) {
 				CdControl(CdlPlay, &track, 0);
 			}
 		}
+#endif
 
 		(void)hue;
 		display();

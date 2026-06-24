@@ -40,6 +40,13 @@
   }
   #play:hover{ background:#fff; }
   #status{ color:var(--cy); font-size:14px; min-height:1.4em; }
+  #pause{
+    position:absolute; bottom:10px; right:10px; display:none; z-index:5;
+    font-family:inherit; font-size:16px; line-height:1; color:#06121a;
+    background:var(--cy); border:0; border-radius:6px; padding:8px 12px;
+    cursor:pointer; opacity:.55; transition:opacity .15s; box-shadow:0 0 10px rgba(30,240,255,.5);
+  }
+  #pause:hover{ opacity:1; }
   .hint{ color:#b69adf; font-size:12px; max-width:46ch; line-height:1.6; }
   .links{ margin-top:22px; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
   .links a{
@@ -64,6 +71,7 @@
         downloads needed). It's a non-interactive demo — just sit back. Turn up
         the sound 🔊</div>
     </div>
+    <button id="pause" title="Pause / resume (spacebar)">⏸</button>
   </div>
 
   <div class="links">
@@ -74,7 +82,7 @@
 
   <footer>
     Unofficial fan tribute to <a href="https://www.seckc.org" style="color:#b69adf">SecKC</a>,
-    Kansas City's hacker meetup. Built with PSn00bSDK; original music. Runs via
+    Kansas City's hacker meetup. Built with PSn00bSDK. Runs via
     <a href="https://nostalgist.js.org/" style="color:#b69adf">Nostalgist.js</a> +
     the pcsx_rearmed libretro core.
   </footer>
@@ -86,18 +94,36 @@ const btn = document.getElementById('play')
 const status = document.getElementById('status')
 const overlay = document.getElementById('overlay')
 const canvas = document.getElementById('screen')
+const pauseBtn = document.getElementById('pause')
+
+let nostalgist = null
+let paused = false
+
+function togglePause() {
+  if (!nostalgist) return
+  paused = !paused
+  paused ? nostalgist.pause() : nostalgist.resume()
+  pauseBtn.textContent = paused ? '▶' : '⏸'
+  pauseBtn.title = (paused ? 'Resume' : 'Pause') + ' (spacebar)'
+}
+
+pauseBtn.addEventListener('click', togglePause)
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && nostalgist) { e.preventDefault(); togglePause() }
+})
 
 btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
+    const V = '045'   // bump to defeat the browser cache when the disc changes
     const [cue, bin, bios] = await Promise.all([
-      fetch('rave.cue').then(r => r.arrayBuffer()),
-      fetch('rave.bin').then(r => r.arrayBuffer()),
+      fetch('rave.cue?v=' + V).then(r => r.arrayBuffer()),
+      fetch('rave.bin?v=' + V).then(r => r.arrayBuffer()),
       fetch('scph5501.bin').then(r => r.arrayBuffer()),   // OpenBIOS (free)
     ])
     status.textContent = 'Loading emulator core + booting…'
-    await Nostalgist.launch({
+    nostalgist = await Nostalgist.launch({
       core: 'pcsx_rearmed',
       element: canvas,
       rom: [
@@ -108,6 +134,7 @@ btn.addEventListener('click', async () => {
       retroarchConfig: { menu_driver: 'null', video_smooth: false },
     })
     overlay.style.display = 'none'
+    pauseBtn.style.display = 'block'
   } catch (e) {
     btn.style.display = ''
     status.textContent = 'Could not start: ' + (e && e.message ? e.message : e)

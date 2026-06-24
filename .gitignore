@@ -16,3 +16,6 @@ music.wav
 
 # local dev config
 .claude/
+
+# generated trimmed CD-DA loop (regenerate with tools/make_loop.py)
+music_loop.wav
