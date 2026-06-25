@@ -932,10 +932,11 @@ static const char *GREETZ =
 	"SETEC ASTRONOMY  /  SHALL WE PLAY A GAME  /  FIGHT FOR THE USER    *    "
 	"STAY CURIOUS  -  KEEP HACKING  -  110 BPM ON THE PSX    *    ";
 
-/* 3D perspective sine-scroller: each glyph is a flat billboard placed in world
- * space at its own depth; a travelling sine sends the ribbon of text toward and
- * away from the camera, so perspective grows the near letters and shrinks the
- * far ones. */
+/* 3D perspective scroller: each glyph is a flat billboard in world space whose
+ * depth depends on its on-screen position (not time) -- a fixed crest at the
+ * reading centre. Letters glide forward as they scroll to the middle and recede
+ * as they leave, so the word being read is always nearest, biggest and
+ * brightest, with no time-jitter to fight while reading. */
 #define S3_ADV    34     /* world units between glyph origins */
 #define S3_SCALE  6      /* world units per font grid unit    */
 #define S3_BASEZ  340    /* base depth                        */
@@ -965,11 +966,17 @@ static void draw_scroller(uint32_t frame) {
 		if (gl->nseg == 0) continue;
 		for (pass = 0; pass < 2; pass++) {
 			int wx = i * S3_ADV - eff + (pass ? total : 0);
-			int ph, wz, wy, s;
+			int wz, wy, s, d, recede;
 			if (wx < -440 || wx > 440) continue;
-			ph = (wx * 8 + (int)frame * 40) & 4095;
-			wz = S3_BASEZ + ((isin(ph) * S3_WAVE) >> 12);
-			wy = S3_Y + ((isin((ph + 1024) & 4095) * S3_YWAVE) >> 12);
+			/* Depth depends on SCREEN POSITION, not time: a fixed crest at the
+			 * reading centre (wx=0). Each letter glides forward as it scrolls to
+			 * the middle and recedes as it leaves, so the word you're reading is
+			 * always closest/biggest and there's no time-jitter to fight. */
+			d = wx < 0 ? -wx : wx;
+			if (d > 420) d = 420;
+			recede = (d * d) / 420;                 /* 0 at centre .. 420 at edge */
+			wz = (S3_BASEZ - S3_WAVE) + (2 * S3_WAVE * recede) / 420;
+			wy = S3_Y + (S3_YWAVE * recede) / 420;  /* gentle hill: dips at sides */
 			/* brighter the closer it waves toward the camera */
 			{
 				int g = 255 - ((wz - (S3_BASEZ - S3_WAVE)) * 90) / (2 * S3_WAVE);
