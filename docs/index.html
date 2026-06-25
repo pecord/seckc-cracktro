@@ -136,7 +136,7 @@ btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
-    const V = '053'   // bump to defeat the browser cache when the disc changes
+    const V = '054'   // bump to defeat the browser cache when the disc changes
     const noStore = { cache: 'no-store' }
     const [cue, bin, bios] = await Promise.all([
       fetch('rave.cue?v=' + V, noStore).then(r => r.arrayBuffer()),
@@ -158,6 +158,7 @@ btn.addEventListener('click', async () => {
       retroarchCoreConfig: {
         pcsx_rearmed_nocdaudio: 'enabled',     // CD-DA audio ON
         pcsx_rearmed_noxadecoding: 'enabled',  // XA decoding ON
+        pcsx_rearmed_spu_thread: 'enabled',    // SPU (incl. CD mix) off main thread
       },
     })
     overlay.style.display = 'none'
