@@ -87,6 +87,16 @@
     the pcsx_rearmed libretro core.
   </footer>
 
+<!-- Suppress WakeLock: pcsx_rearmed calls navigator.wakeLock.request() and Chrome
+     throws NotAllowedError when the page is not visible, which propagates through
+     Emscripten's invoke_viiii shim and aborts the emulation main loop. -->
+<script>
+  if (navigator.wakeLock) {
+    const noopSentinel = { released: false, release: () => Promise.resolve(), addEventListener: () => {}, removeEventListener: () => {} }
+    navigator.wakeLock = { request: () => Promise.resolve(noopSentinel) }
+  }
+</script>
+
 <script type="module">
 import { Nostalgist } from 'https://cdn.jsdelivr.net/npm/nostalgist/+esm'
 
@@ -136,7 +146,7 @@ btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
-    const V = '055'   // bump to defeat the browser cache when the disc changes
+    const V = '056'   // bump to defeat the browser cache when the disc changes
     const noStore = { cache: 'no-store' }
     const [cue, bin, bios] = await Promise.all([
       fetch('rave.cue?v=' + V, noStore).then(r => r.arrayBuffer()),
