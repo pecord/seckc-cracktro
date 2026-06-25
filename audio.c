@@ -20,7 +20,7 @@ void audio_init(void) {
 	CdInit();
 	SpuInit();
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
-	SpuSetCommonMasterVolume(0x3333, 0x3333);   /* ~80% of 0x3fff -- soften the mix */
+	SpuSetCommonMasterVolume(0x1fff, 0x1fff);   /* ~50% of 0x3fff */
 	SpuSetCommonCDVolume(0x3fff, 0x3fff);       /* CD-DA -> SPU input (defaults to 0!) */
 
 	{
@@ -30,8 +30,8 @@ void audio_init(void) {
 	CdControl(CdlDemute, 0, 0);
 
 	/* KUSEG re-assert for the browser core (see file header) */
-	*(volatile unsigned short *)0x1f801d80 = 0x3333;  /* SPU master vol L (~80%) */
-	*(volatile unsigned short *)0x1f801d82 = 0x3333;  /* SPU master vol R (~80%) */
+	*(volatile unsigned short *)0x1f801d80 = 0x1fff;  /* SPU master vol L (~50%) */
+	*(volatile unsigned short *)0x1f801d82 = 0x1fff;  /* SPU master vol R (~50%) */
 	*(volatile unsigned short *)0x1f801db0 = 0x3fff;  /* SPU CD input vol L */
 	*(volatile unsigned short *)0x1f801db2 = 0x3fff;  /* SPU CD input vol R */
 	*(volatile unsigned short *)0x1f801daa = 0xc001;  /* SPU on + unmute + CD audio enable */
