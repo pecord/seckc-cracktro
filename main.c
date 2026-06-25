@@ -901,7 +901,7 @@ static void draw_seckc_tex(uint32_t frame, int env) {
 #if PERF_SPHERE
 #define SP_SLICES  20                  /* longitude divisions */
 #define SP_STACKS  12                  /* latitude divisions  */
-#define SP_RAD     170                 /* model-space radius   */
+#define SP_RAD     105                 /* model-space radius (small accent, not hero) */
 #define SP_NV      ((SP_SLICES + 1) * (SP_STACKS + 1))
 #define ENV_W      128
 #define ENV_H      128
@@ -918,44 +918,67 @@ static inline uint16_t rgb5(int r, int g, int b) {
 	return (uint16_t)(r | (g << 5) | (b << 10));
 }
 
+static inline float fabsf_(float x) { return x < 0 ? -x : x; }
+static inline float fracf_(float x) { return x - (int)x; }
+
 /* Build the reflection map once (boot-time; soft-float here is fine). Indexed by
- * surface normal: texel (u,v) <-> normal (nx,ny,nz=sqrt(1-nx^2-ny^2)). */
+ * surface normal: texel (u,v) <-> normal (nx,ny,nz). We shade by the REFLECTION
+ * vector R = 2(N.V)N - V (viewer along +z), painting a little synthwave world --
+ * neon sun + horizontal slits on the horizon, a magenta perspective grid on the
+ * floor, stars + scan streaks in the sky -- so as the ball spins those features
+ * sweep across it and read as a mirror reflection, not a flat gradient. */
 static void chrome_env_init(void) {
 	int u, v;
-	/* light direction for the specular hotspot */
-	const float lx = -0.45f, ly = 0.55f, lz = 0.70f;
+	const float lx = -0.45f, ly = 0.55f, lz = 0.70f;   /* specular light dir */
 	for (v = 0; v < ENV_H; v++) {
 		for (u = 0; u < ENV_W; u++) {
 			float nx = (u - ENV_W / 2) / (float)(ENV_W / 2);
 			float ny = (ENV_H / 2 - v) / (float)(ENV_H / 2);
 			float r2 = nx * nx + ny * ny;
-			float nz, ry;
-			int r, g, b, base;
+			float nz, rx, ry, e, r, g, b;
 			if (r2 > 1.0f) r2 = 1.0f;
 			nz = 1.0f - r2; nz = nz > 0 ? nz : 0;
-			/* cheap sqrt for nz */
 			{ float x = nz, last = 0; int it; for (it = 0; it < 8 && x != last; it++) { last = x; x = 0.5f * (x + (nz > 0 ? nz / x : 0)); } nz = x; }
-			ry = 2.0f * nz * ny;               /* reflected vertical component */
+			rx = 2.0f * nz * nx;
+			ry = 2.0f * nz * ny;
+			e  = ry;                                   /* elevation of reflected ray */
 
-			/* vertical sky gradient: cyan/white up, deep magenta/purple down */
-			if (ry >= 0) {
-				r = (int)(6 + ry * 18);
-				g = (int)(20 + ry * 11);
-				b = (int)(24 + ry * 7);
+			if (e >= 0.0f) {
+				/* sky: deep purple, deepening upward, with faint scan streaks */
+				r = 5 + e * 3; g = 1 + e * 2; b = 11 + e * 12;
+				if (((int)(e * 70) & 7) == 0) { r += 3; b += 5; }
+				/* sparse stars (deterministic hash) */
+				{
+					unsigned h = ((unsigned)u * 73856093u) ^ ((unsigned)v * 19349663u);
+					if ((h & 1023u) < 5u) { r = 28; g = 28; b = 31; }
+				}
 			} else {
-				r = (int)(14 + (-ry) * 14);
-				g = (int)(3 + (-ry) * 2);
-				b = (int)(18 + (-ry) * 10);
+				/* floor: magenta perspective grid converging to the horizon */
+				float fe = -e;
+				float depth = 1.0f / (fe + 0.05f);
+				r = 8; g = 2; b = 12;
+				if (fracf_(depth * 0.6f) < 0.14f)        { r += 18; g += 3; b += 22; } /* rows */
+				if (fracf_(rx * depth * 0.7f) < 0.11f)   { r += 14; g += 2; b += 18; } /* cols */
 			}
-			/* bright horizon band where the reflection grazes the skyline */
-			base = (int)(28 * (1.0f - (ry < 0 ? -ry : ry) * 3.5f));
-			if (base > 0) { r += base; g += base / 2; b += base; }
+
+			/* neon sun + glow straddling the horizon (e ~ 0) */
+			{
+				float glow = 1.0f - fabsf_(e) * 3.0f;
+				if (glow > 0.0f) {
+					float sr = 31, sg = 6 + e * 40, sb = 20 - e * 30;   /* pink->cyan */
+					float slit = (fabsf_(e) < 0.18f && (((int)(fabsf_(e) * 90) & 1))) ? 0.25f : 1.0f;
+					float k = glow * glow * slit;
+					r = r * (1 - k) + sr * k;
+					g = g * (1 - k) + (sg < 0 ? 0 : sg) * k;
+					b = b * (1 - k) + (sb < 0 ? 0 : sb) * k;
+				}
+			}
 			/* specular hotspot toward the light */
 			{
 				float d = nx * lx + ny * ly + nz * lz;
-				if (d > 0.86f) { float s = (d - 0.86f) / 0.14f; int w = (int)(s * s * 31); r += w; g += w; b += w; }
+				if (d > 0.9f) { float s = (d - 0.9f) / 0.1f; float w = s * s * 31; r += w; g += w; b += w; }
 			}
-			chrome_env[v * ENV_W + u] = rgb5(r, g, b);
+			chrome_env[v * ENV_W + u] = rgb5((int)r, (int)g, (int)b);
 		}
 	}
 }
@@ -993,7 +1016,11 @@ static inline void env_uv(const MATRIX *R, const SVECTOR *n, uint8_t *u, uint8_t
 static void draw_chrome_sphere(uint32_t frame) {
 	MATRIX  m;
 	SVECTOR rot = { (short)(isin(frame * 11) >> 7), (short)(frame * 13), 0 };
-	VECTOR  pos = { 0, (isin(frame * 18) >> 7), 360 + (icos(frame * 9) >> 7) };
+	/* orbit a lazy lissajous well off-centre and pushed back in z, so the SecKC
+	 * logo stays the centrepiece and the chrome ball weaves around behind it */
+	VECTOR  pos = { (isin(frame * 7) * 250) >> 12,
+	                ((icos(frame * 5) * 60) >> 12) - 35,
+	                430 + ((isin(frame * 9) * 110) >> 12) };
 	int     j, i;
 
 	RotMatrix(&rot, &m);
