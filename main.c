@@ -50,6 +50,10 @@
 #ifndef PERF_SPHERE
 #define PERF_SPHERE     1   /* GTE environment-mapped chrome sphere */
 #endif
+#ifndef PERF_SPHERE_DYNAMIC
+#define PERF_SPHERE_DYNAMIC 1  /* reflect the LIVE scene (prev frame) in the ball,
+                                * not just a baked env map */
+#endif
 
 /* Plasma grid: 16x12 cells of 20px gouraud quads -> 17x13 vertices. */
 #define PCOLS       16
@@ -1065,6 +1069,32 @@ static void draw_chrome_sphere(uint32_t frame) {
 		}
 	}
 }
+
+#if PERF_SPHERE_DYNAMIC
+/* Dynamic reflection: instead of the baked synthwave map, copy a shrunk snapshot
+ * of the PREVIOUS frame (the framebuffer currently on screen) into the env-map
+ * page, so the chrome ball mirrors the live scene -- the SecKC logo, grid,
+ * scroller and all. A GPU VRAM->VRAM blit (one textured quad) through a throwaway
+ * draw env aimed at the env page; the sphere then samples it as before. One frame
+ * of latency by construction, which also avoids the ball reflecting itself into a
+ * feedback loop within a frame. */
+static DRAWENV  refl_draw;
+static POLY_FT4 refl_blit;
+static void update_reflection(void) {
+	int srcy = db[db_active].disp.disp.y;       /* prev frame's framebuffer y (0 or 240) */
+	DrawSync(0);                                 /* ensure that frame finished rasterising */
+	SetDefDrawEnv(&refl_draw, 640, 0, ENV_W, ENV_H);
+	refl_draw.isbg = 0; refl_draw.dtd = 1;
+	PutDrawEnv(&refl_draw);
+	setPolyFT4(&refl_blit);
+	setRGB0(&refl_blit, 128, 128, 128);          /* 0x80 == unmodulated texel */
+	setXY4(&refl_blit, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
+	setUV4(&refl_blit, 0, 0, 255, 0, 0, 239, 255, 239);   /* 256x240 of the FB -> 128x128 */
+	refl_blit.tpage = getTPage(2, 0, 0, srcy);   /* framebuffer as a 16bpp texture */
+	DrawPrim(&refl_blit);
+	DrawSync(0);
+}
+#endif /* PERF_SPHERE_DYNAMIC */
 #endif /* PERF_SPHERE */
 
 /* "SecKC" as a chunky EXTRUDED 3D text logo: every vector-font stroke becomes a
@@ -1274,14 +1304,10 @@ int main(void) {
 	init();
 	boot_splash();
 
-	/* kick off the CD-DA music track (2), looping (CdlModeRept) */
-#if PERF_CDDA
-	{
-		uint8_t mode = CdlModeDA | CdlModeRept, track = 2;
-		CdControl(CdlSetmode, &mode, 0);
-		CdControl(CdlPlay, &track, 0);
-	}
-#endif
+	/* Music starts a few frames INTO the render loop, not here -- see the CD
+	 * state machine below. Kicking it before the loop made the very first audio
+	 * out be the tail of track 2 (the last track, so the head is parked near the
+	 * end) for a moment while it sought back to the start. */
 
 	while (1) {
 		/* VU meter: drive the pulse from the live audio peak (fast attack,
@@ -1307,6 +1333,9 @@ int main(void) {
 		draw_dvd();
 
 #if PERF_SPHERE
+#if PERF_SPHERE_DYNAMIC
+		if (frame > 1) update_reflection();   /* live scene -> env map (1-frame delay) */
+#endif
 		draw_chrome_sphere(frame);
 #endif
 
@@ -1323,25 +1352,38 @@ int main(void) {
 		}
 #endif
 
-		/* Keep the music looping with a minimal gap. CdlModeRept doesn't loop a
-		 * single track seamlessly under (emulated) CD, so the track ends and
-		 * stops; the old once-a-second status poll meant up to ~1s of silence
-		 * before we noticed and restarted. Poll the cheap status word every
-		 * couple of frames and re-issue CdlPlay the instant playback drops --
-		 * CdlPlay(track 2) seeks to the track's INDEX 01, skipping the 2s
-		 * pregap. The cooldown stops us from spamming Play during the seek. */
+		/* CD-DA music: start once rendering is up, and MUTE across every seek so
+		 * the end-of-track tail (the head is parked near the disc end) is never
+		 * heard -- not at first start, not at loop restarts. State machine:
+		 *   0 = wait for the loop to be running, then mute + Play(track 2)
+		 *   1 = seeking (muted); after it settles, Demute and play
+		 *   2 = playing; poll status, and if playback ever drops (track ended,
+		 *       since CdlModeRept doesn't loop a single track under emulated CD),
+		 *       mute + re-seek back to state 1 for a clean, blip-free restart. */
 #if PERF_CDDA
 		{
-			static int cd_cooldown = 0;
-			if (cd_cooldown > 0) {
-				cd_cooldown--;
-			} else if (frame > 30 && (frame % 2) == 0) {
+			static int cd_state = 0, cd_timer = 0;
+			uint8_t track = 2;
+			if (cd_state == 0) {
+				if (frame >= 4) {
+					uint8_t mode = CdlModeDA | CdlModeRept;
+					CdControl(CdlMute, 0, 0);
+					CdControl(CdlSetmode, &mode, 0);
+					CdControl(CdlPlay, &track, 0);
+					cd_state = 1; cd_timer = 0;
+				}
+			} else if (cd_state == 1) {
+				if (++cd_timer >= 12) {          /* seek settled, now at track start */
+					CdControl(CdlDemute, 0, 0);
+					cd_state = 2;
+				}
+			} else if ((frame & 1) == 0) {       /* state 2: poll every other frame */
 				uint8_t res[16];
 				CdControl(CdlNop, 0, res);
-				if (!(res[0] & CdlStatPlay)) {
-					uint8_t track = 2;
+				if (!(res[0] & CdlStatPlay)) {   /* dropped -> clean muted re-seek */
+					CdControl(CdlMute, 0, 0);
 					CdControl(CdlPlay, &track, 0);
-					cd_cooldown = 15;     /* ~0.25s for the seek to settle */
+					cd_state = 1; cd_timer = 0;
 				}
 			}
 		}
