@@ -1007,12 +1007,15 @@ static void sphere_init(void) {
 	}
 }
 
-/* env-map UV for a vertex normal rotated by the current sphere matrix R */
-static inline void env_uv(const MATRIX *R, const SVECTOR *n, uint8_t *u, uint8_t *uv_v) {
-	int nx = (R->m[0][0] * n->vx + R->m[0][1] * n->vy + R->m[0][2] * n->vz) >> 12;
-	int ny = (R->m[1][0] * n->vx + R->m[1][1] * n->vy + R->m[1][2] * n->vz) >> 12;
-	int iu = (ENV_W / 2) + (nx >> 6);             /* -4096..4096 -> 0..128 */
-	int iv = (ENV_H / 2) - (ny >> 6);
+/* Env-map UV from a vertex's SCREEN position relative to the ball centre (a
+ * "matcap"): (sx,sy) on the visible disc -> (u,v) in the env map. Sampling by
+ * screen position (not the spun object normal) keeps the reflected image
+ * anchored to the world while the surface spins underneath -- exactly how a real
+ * chrome ball behaves -- so the sun no longer tumbles upside-down as it rotates. */
+static inline void matcap_uv(int sx, int sy, int cx, int cy, int rad,
+                             uint8_t *u, uint8_t *uv_v) {
+	int iu = (ENV_W / 2) + ((sx - cx) * (ENV_W / 2)) / rad;
+	int iv = (ENV_H / 2) + ((sy - cy) * (ENV_H / 2)) / rad;   /* screen y is down = env v down */
 	if (iu < 0) iu = 0; if (iu > ENV_W - 1) iu = ENV_W - 1;
 	if (iv < 0) iv = 0; if (iv > ENV_H - 1) iv = ENV_H - 1;
 	*u = (uint8_t)iu; *uv_v = (uint8_t)iv;
@@ -1026,12 +1029,19 @@ static void draw_chrome_sphere(uint32_t frame) {
 	VECTOR  pos = { (isin(frame * 7) * 250) >> 12,
 	                ((icos(frame * 5) * 60) >> 12) - 35,
 	                430 + ((isin(frame * 9) * 110) >> 12) };
-	int     j, i;
+	int     j, i, cx, cy, rad;
 
 	RotMatrix(&rot, &m);
 	TransMatrix(&m, &pos);
 	gte_SetRotMatrix(&m);
 	gte_SetTransMatrix(&m);
+
+	/* ball centre + radius in screen space (the model origin projects to just the
+	 * translation, so this is a plain perspective divide) for the matcap lookup */
+	cx  = CENTERX + (pos.vx * PROJ) / pos.vz;
+	cy  = CENTERY + (pos.vy * PROJ) / pos.vz;
+	rad = (SP_RAD  * PROJ) / pos.vz;
+	if (rad < 1) rad = 1;
 
 	for (j = 0; j < SP_STACKS; j++) {
 		for (i = 0; i < SP_SLICES; i++) {
@@ -1057,10 +1067,10 @@ static void draw_chrome_sphere(uint32_t frame) {
 			gte_avsz4();
 			gte_stotz(&otz);
 
-			env_uv(&m, &sp_nrm[a], &ua, &va);
-			env_uv(&m, &sp_nrm[b], &ub, &vb);
-			env_uv(&m, &sp_nrm[c], &uc, &vc);
-			env_uv(&m, &sp_nrm[d], &ud, &vd);
+			matcap_uv(pol->x0, pol->y0, cx, cy, rad, &ua, &va);
+			matcap_uv(pol->x1, pol->y1, cx, cy, rad, &ub, &vb);
+			matcap_uv(pol->x2, pol->y2, cx, cy, rad, &uc, &vc);
+			matcap_uv(pol->x3, pol->y3, cx, cy, rad, &ud, &vd);
 			setUV4(pol, ua, va, ub, vb, uc, vc, ud, vd);
 			pol->tpage = env_tpage;
 
@@ -1108,7 +1118,7 @@ static void update_reflection(void) {
 	setRGB0(&refl_blit, 128, 128, 128);
 	setSemiTrans(&refl_blit, 1);
 	setXY4(&refl_blit, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
-	setUV4(&refl_blit, 255, 0, 0, 0, 255, 239, 0, 239);   /* U-flipped, 256x240 FB -> 128x128 */
+	setUV4(&refl_blit, 0, 0, 255, 0, 0, 239, 255, 239);   /* 256x240 FB -> 128x128, upright */
 	refl_blit.tpage = getTPage(2, 0, 0, srcy);   /* framebuffer as a 16bpp texture, ABR=0 -> 50/50 */
 	DrawPrim(&refl_blit);
 	DrawSync(0);
