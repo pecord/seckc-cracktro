@@ -1118,7 +1118,9 @@ static void update_reflection(void) {
 	setRGB0(&refl_blit, 128, 128, 128);
 	setSemiTrans(&refl_blit, 1);
 	setXY4(&refl_blit, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
-	setUV4(&refl_blit, 0, 0, 255, 0, 0, 239, 255, 239);   /* 256x240 FB -> 128x128, upright */
+	/* U is mirrored (255..0) so the reflection is laterally inverted like a real
+	 * convex mirror -- text in the ball reads back-to-front. V stays upright. */
+	setUV4(&refl_blit, 255, 0, 0, 0, 255, 239, 0, 239);   /* 256x240 FB -> 128x128, L-R mirrored */
 	refl_blit.tpage = getTPage(2, 0, 0, srcy);   /* framebuffer as a 16bpp texture, ABR=0 -> 50/50 */
 	DrawPrim(&refl_blit);
 	DrawSync(0);
