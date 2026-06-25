@@ -131,6 +131,19 @@ static uint16_t dvd_tpage, dvd_clut;
 static uint32_t spu_cap[128];          /* 512 bytes = 256 samples */
 static int      g_vu = 0;
 
+#if !PERF_VU_CAPTURE
+#include "vu_env.h"                     /* build-time loudness envelope (0..255) */
+static inline int bcd2i(uint8_t b) { return (b >> 4) * 10 + (b & 0x0f); }
+#endif
+
+/* Music-reactive VU level, 0..255.
+ *
+ * Default: index a build-time loudness envelope (one byte per CD sector,
+ * tools/make_vu.py) by the live CD-DA playback position read with CdlGetlocP.
+ * The skull pulses perfectly in sync with the soundtrack with NO per-frame
+ * audio reads -- unlike the old SpuRead VU, which forced pcsx_rearmed onto its
+ * slow SPU path (~1fps). Build -DPERF_VU_CAPTURE=1 for live SPU-capture metering
+ * on real hardware instead. */
 static int audio_level(uint32_t frame) {
 #if PERF_VU_CAPTURE
 	static int pending = 0, have_real = 0, last = 0;
@@ -152,16 +165,24 @@ static int audio_level(uint32_t frame) {
 		SpuRead(spu_cap, sizeof(spu_cap));
 		pending = 1;
 	}
-
 	if (have_real)
-		return last;                       /* 0..32767, real audio peak */
+		return last >> 7;                  /* 0..32767 peak -> 0..255 */
+#else
+	{
+		CdlLOCINFOP loc;
+		if (CdControl(CdlGetlocP, 0, (uint8_t *)&loc)) {
+			int sec = bcd2i(loc.track_minute) * 60 + bcd2i(loc.track_second);
+			int idx = sec * 75 + bcd2i(loc.track_sector);
+			if (idx >= 0)
+				return vu_env[idx % VU_ENV_LEN];   /* synced 0..255 */
+		}
+	}
 #endif
 
-	/* fallback: a punchy four-on-the-floor-ish pulse (~150 BPM at 60 fps).
-	 * Also the only path when PERF_AUDIO is bisected off. */
+	/* fallback synthetic pulse if capture/position is unavailable */
 	{
 		int ph = (int)(frame % 24);
-		return (ph < 7) ? (32000 - ph * 4000) : 4500;
+		return (ph < 7) ? (250 - ph * 30) : 40;
 	}
 }
 
@@ -1062,8 +1083,8 @@ int main(void) {
 	while (1) {
 		/* VU meter: drive the pulse from the live audio peak (fast attack,
 		 * slow decay) so the visuals react to whatever music is playing */
-		int lvl = audio_level(frame);         /* 0..32767 */
-		int target = lvl >> 6;                /* 0..255-ish */
+		int lvl = audio_level(frame);         /* 0..255 */
+		int target = lvl;                     /* drives the VU envelope */
 		int env;
 		uint8_t hue = (uint8_t)(frame * 3);
 		if (target > 255) target = 255;
