@@ -913,7 +913,8 @@ static void draw_seckc_tex(uint32_t frame, int env) {
 static SVECTOR  sp_pos[SP_NV];          /* vertex positions (model units) */
 static SVECTOR  sp_nrm[SP_NV];          /* unit normals, 1.0 == 4096       */
 static uint16_t chrome_env[ENV_W * ENV_H];
-static uint16_t env_tpage;
+static uint16_t env_tpage;        /* working env map the sphere samples (VRAM 640,0) */
+static uint16_t env_base_tpage;   /* pristine baked map kept for blending (VRAM 768,0) */
 
 static inline uint16_t rgb5(int r, int g, int b) {
 	if (r < 0) r = 0; if (r > 31) r = 31;
@@ -1079,18 +1080,36 @@ static void draw_chrome_sphere(uint32_t frame) {
  * of latency by construction, which also avoids the ball reflecting itself into a
  * feedback loop within a frame. */
 static DRAWENV  refl_draw;
-static POLY_FT4 refl_blit;
+static POLY_FT4 refl_base;   /* baked map -> working env (opaque reset) */
+static POLY_FT4 refl_blit;   /* live framebuffer -> working env (50% over baked) */
 static void update_reflection(void) {
 	int srcy = db[db_active].disp.disp.y;       /* prev frame's framebuffer y (0 or 240) */
 	DrawSync(0);                                 /* ensure that frame finished rasterising */
 	SetDefDrawEnv(&refl_draw, 640, 0, ENV_W, ENV_H);
 	refl_draw.isbg = 0; refl_draw.dtd = 1;
 	PutDrawEnv(&refl_draw);
+
+	/* 1) reset the working env to the pristine baked map. Without this the live
+	 *    blit would composite over LAST frame's env, and since the framebuffer
+	 *    contains the ball (which is showing the env), the reflection would feed
+	 *    back into itself forever -> the infinite "Droste" spiral. */
+	setPolyFT4(&refl_base);
+	setRGB0(&refl_base, 128, 128, 128);
+	setXY4(&refl_base, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
+	setUV4(&refl_base, 0, 0, ENV_W - 1, 0, 0, ENV_H - 1, ENV_W - 1, ENV_H - 1);
+	refl_base.tpage = getTPage(2, 0, 768, 0);
+	DrawPrim(&refl_base);
+
+	/* 2) blend the live scene over it at 50% (semi-transparent, ABR=0). The live
+	 *    reflection's own recursive copy is therefore halved every bounce and
+	 *    converges in ~1 step instead of spiralling. UVs are flipped in U so the
+	 *    convex-mirror image reads the right way round. */
 	setPolyFT4(&refl_blit);
-	setRGB0(&refl_blit, 128, 128, 128);          /* 0x80 == unmodulated texel */
+	setRGB0(&refl_blit, 128, 128, 128);
+	setSemiTrans(&refl_blit, 1);
 	setXY4(&refl_blit, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
-	setUV4(&refl_blit, 0, 0, 255, 0, 0, 239, 255, 239);   /* 256x240 of the FB -> 128x128 */
-	refl_blit.tpage = getTPage(2, 0, 0, srcy);   /* framebuffer as a 16bpp texture */
+	setUV4(&refl_blit, 255, 0, 0, 0, 255, 239, 0, 239);   /* U-flipped, 256x240 FB -> 128x128 */
+	refl_blit.tpage = getTPage(2, 0, 0, srcy);   /* framebuffer as a 16bpp texture, ABR=0 -> 50/50 */
 	DrawPrim(&refl_blit);
 	DrawSync(0);
 }
@@ -1497,10 +1516,13 @@ static void init(void) {
 	sphere_init();
 	chrome_env_init();
 	{
-		RECT er = { 640, 0, ENV_W, ENV_H };
-		LoadImage(&er, (uint32_t *)chrome_env);
+		RECT er  = { 640, 0, ENV_W, ENV_H };   /* working map the sphere samples */
+		RECT erb = { 768, 0, ENV_W, ENV_H };   /* pristine baked copy for blending */
+		LoadImage(&er,  (uint32_t *)chrome_env);
+		LoadImage(&erb, (uint32_t *)chrome_env);
 		DrawSync(0);
-		env_tpage = getTPage(2, 0, 640, 0);
+		env_tpage      = getTPage(2, 0, 640, 0);
+		env_base_tpage = getTPage(2, 0, 768, 0);
 	}
 #endif
 }
