@@ -1120,7 +1120,7 @@ static void draw_seckc_logo(uint32_t frame, int env) {
 /* ---------------------------------------------------------------- scroller */
 
 static const char *GREETZ =
-	"SECKC PRESENTS A PLAYSTATION CRACKTRO FOR THE KANSAS CITY HACKER SCENE    *    "
+	"SECKC // PSX  -  A PLAYSTATION DEMO FOR THE KANSAS CITY HACKER SCENE    *    "
 	"DESTROY NO DATA  -  MAINTAIN NO PERSISTENCE  -  ABOVE ALL ELSE DO NO HARM    *    "
 	"WE ARE SECKC  -  KANSAS CITYS HACKERS  -  LIVE EVERY MONTH AT KNUCKLEHEADS    *    "
 	"GREETZ TO DC816  COWTOWN COMPUTER CONGRESS  BSIDESKC  HAMMERSPACE    *    "
@@ -1305,21 +1305,6 @@ int main(void) {
 #endif
 		draw_starfield();
 		draw_dvd();
-
-		/* flying Malort bottles tumbling through the scene */
-		{
-			int i;
-			for (i = 0; i < RING_CUBES; i++) {
-				int     a   = (frame * 14) + (i * 4096) / RING_CUBES;
-				int32_t rad = 400;             /* constant orbit */
-				VECTOR  pos = { (icos(a) * rad) >> 12,
-				                (isin(a) * rad) >> 12, 640 };
-				SVECTOR rot = { (short)(isin(frame * 9 + i * 500) >> 5),
-				                (short)(frame * 8 + i * 700),
-				                (short)(isin(frame * 6 + i * 300) >> 6), 0 };
-				draw_bottle(&pos, &rot, ONE);
-			}
-		}
 
 #if PERF_SPHERE
 		draw_chrome_sphere(frame);

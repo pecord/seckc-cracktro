@@ -7,8 +7,8 @@
      emulator can use SharedArrayBuffer + its threaded core (full speed).
      Reloads once on first visit to register the worker. -->
 <script src="coi-serviceworker.min.js"></script>
-<title>SecKC Cracktro — PSX demo in your browser</title>
-<meta name="description" content="A SecKC demoscene cracktro for the original PlayStation, running in your browser.">
+<title>SecKC // PSX — a PlayStation demo in your browser</title>
+<meta name="description" content="A SecKC demoscene production for the original PlayStation, running in your browser.">
 <style>
   :root{ --cy:#1ef0ff; --mg:#ff2bd6; --pu:#8a5cff; --bg0:#1a0a2e; --bg1:#2d0b46; }
   *{ box-sizing:border-box; }
@@ -59,7 +59,7 @@
 </style>
 </head>
 <body>
-  <h1>SecKC&nbsp;Cracktro</h1>
+  <h1>SecKC&nbsp;//&nbsp;PSX</h1>
   <div class="sub">// A PLAYSTATION DEMO, IN YOUR BROWSER //</div>
 
   <div id="stage">
@@ -152,7 +152,7 @@ btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
-    const V = '061'   // bump to defeat the browser cache when the disc changes
+    const V = '062'   // bump to defeat the browser cache when the disc changes
     const noStore = { cache: 'no-store' }
     const [cue, bin, bios] = await Promise.all([
       fetch('rave.cue?v=' + V, noStore).then(r => r.arrayBuffer()),
