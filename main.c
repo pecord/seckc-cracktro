@@ -47,6 +47,9 @@
 #ifndef PERF_BG
 #define PERF_BG         1   /* full-screen backdrop overdraw + additive blend */
 #endif
+#ifndef PERF_SPHERE
+#define PERF_SPHERE     1   /* GTE environment-mapped chrome sphere */
+#endif
 
 /* Plasma grid: 16x12 cells of 20px gouraud quads -> 17x13 vertices. */
 #define PCOLS       16
@@ -888,6 +891,155 @@ static void draw_seckc_tex(uint32_t frame, int env) {
 	}
 }
 
+/* ---------------------------------------------------------- chrome sphere */
+/* A GTE environment-mapped "chrome" ball. The trick: each vertex's UV into a
+ * static reflection map is derived from that vertex's NORMAL after rotation --
+ * so as the sphere spins, the map sweeps across it and reads as a mirror
+ * reflection. Pure GTE + a CPU 3x3 normal rotate; no per-pixel work, so it runs
+ * at full speed (a few hundred textured quads). The env map is a synthwave sky:
+ * cyan above, magenta below, a bright horizon band and a specular hotspot. */
+#if PERF_SPHERE
+#define SP_SLICES  20                  /* longitude divisions */
+#define SP_STACKS  12                  /* latitude divisions  */
+#define SP_RAD     170                 /* model-space radius   */
+#define SP_NV      ((SP_SLICES + 1) * (SP_STACKS + 1))
+#define ENV_W      128
+#define ENV_H      128
+
+static SVECTOR  sp_pos[SP_NV];          /* vertex positions (model units) */
+static SVECTOR  sp_nrm[SP_NV];          /* unit normals, 1.0 == 4096       */
+static uint16_t chrome_env[ENV_W * ENV_H];
+static uint16_t env_tpage;
+
+static inline uint16_t rgb5(int r, int g, int b) {
+	if (r < 0) r = 0; if (r > 31) r = 31;
+	if (g < 0) g = 0; if (g > 31) g = 31;
+	if (b < 0) b = 0; if (b > 31) b = 31;
+	return (uint16_t)(r | (g << 5) | (b << 10));
+}
+
+/* Build the reflection map once (boot-time; soft-float here is fine). Indexed by
+ * surface normal: texel (u,v) <-> normal (nx,ny,nz=sqrt(1-nx^2-ny^2)). */
+static void chrome_env_init(void) {
+	int u, v;
+	/* light direction for the specular hotspot */
+	const float lx = -0.45f, ly = 0.55f, lz = 0.70f;
+	for (v = 0; v < ENV_H; v++) {
+		for (u = 0; u < ENV_W; u++) {
+			float nx = (u - ENV_W / 2) / (float)(ENV_W / 2);
+			float ny = (ENV_H / 2 - v) / (float)(ENV_H / 2);
+			float r2 = nx * nx + ny * ny;
+			float nz, ry;
+			int r, g, b, base;
+			if (r2 > 1.0f) r2 = 1.0f;
+			nz = 1.0f - r2; nz = nz > 0 ? nz : 0;
+			/* cheap sqrt for nz */
+			{ float x = nz, last = 0; int it; for (it = 0; it < 8 && x != last; it++) { last = x; x = 0.5f * (x + (nz > 0 ? nz / x : 0)); } nz = x; }
+			ry = 2.0f * nz * ny;               /* reflected vertical component */
+
+			/* vertical sky gradient: cyan/white up, deep magenta/purple down */
+			if (ry >= 0) {
+				r = (int)(6 + ry * 18);
+				g = (int)(20 + ry * 11);
+				b = (int)(24 + ry * 7);
+			} else {
+				r = (int)(14 + (-ry) * 14);
+				g = (int)(3 + (-ry) * 2);
+				b = (int)(18 + (-ry) * 10);
+			}
+			/* bright horizon band where the reflection grazes the skyline */
+			base = (int)(28 * (1.0f - (ry < 0 ? -ry : ry) * 3.5f));
+			if (base > 0) { r += base; g += base / 2; b += base; }
+			/* specular hotspot toward the light */
+			{
+				float d = nx * lx + ny * ly + nz * lz;
+				if (d > 0.86f) { float s = (d - 0.86f) / 0.14f; int w = (int)(s * s * 31); r += w; g += w; b += w; }
+			}
+			chrome_env[v * ENV_W + u] = rgb5(r, g, b);
+		}
+	}
+}
+
+/* Tessellate a unit sphere into position + normal tables (boot-time). */
+static void sphere_init(void) {
+	int j, i, k = 0;
+	for (j = 0; j <= SP_STACKS; j++) {
+		int lat = -1024 + (2048 * j) / SP_STACKS;     /* -90..+90 deg (4096=360) */
+		int cl  = isin(lat & 4095);                   /* y unit, -4096..4096     */
+		int rl  = icos(lat & 4095);                   /* ring radius, 0..4096    */
+		for (i = 0; i <= SP_SLICES; i++, k++) {
+			int lon = (4096 * i) / SP_SLICES;
+			int xu  = (rl * icos(lon & 4095)) >> 12;  /* x unit, -4096..4096 */
+			int zu  = (rl * isin(lon & 4095)) >> 12;  /* z unit             */
+			sp_nrm[k].vx = (short)xu; sp_nrm[k].vy = (short)cl; sp_nrm[k].vz = (short)zu;
+			sp_pos[k].vx = (short)((xu * SP_RAD) >> 12);
+			sp_pos[k].vy = (short)((cl * SP_RAD) >> 12);
+			sp_pos[k].vz = (short)((zu * SP_RAD) >> 12);
+		}
+	}
+}
+
+/* env-map UV for a vertex normal rotated by the current sphere matrix R */
+static inline void env_uv(const MATRIX *R, const SVECTOR *n, uint8_t *u, uint8_t *uv_v) {
+	int nx = (R->m[0][0] * n->vx + R->m[0][1] * n->vy + R->m[0][2] * n->vz) >> 12;
+	int ny = (R->m[1][0] * n->vx + R->m[1][1] * n->vy + R->m[1][2] * n->vz) >> 12;
+	int iu = (ENV_W / 2) + (nx >> 6);             /* -4096..4096 -> 0..128 */
+	int iv = (ENV_H / 2) - (ny >> 6);
+	if (iu < 0) iu = 0; if (iu > ENV_W - 1) iu = ENV_W - 1;
+	if (iv < 0) iv = 0; if (iv > ENV_H - 1) iv = ENV_H - 1;
+	*u = (uint8_t)iu; *uv_v = (uint8_t)iv;
+}
+
+static void draw_chrome_sphere(uint32_t frame) {
+	MATRIX  m;
+	SVECTOR rot = { (short)(isin(frame * 11) >> 7), (short)(frame * 13), 0 };
+	VECTOR  pos = { 0, (isin(frame * 18) >> 7), 360 + (icos(frame * 9) >> 7) };
+	int     j, i;
+
+	RotMatrix(&rot, &m);
+	TransMatrix(&m, &pos);
+	gte_SetRotMatrix(&m);
+	gte_SetTransMatrix(&m);
+
+	for (j = 0; j < SP_STACKS; j++) {
+		for (i = 0; i < SP_SLICES; i++) {
+			int a = j * (SP_SLICES + 1) + i;
+			int b = a + 1;
+			int c = a + (SP_SLICES + 1);
+			int d = c + 1;
+			POLY_FT4 *pol = (POLY_FT4 *)db_nextpri;
+			int otz;
+			uint8_t ua, va, ub, vb, uc, vc, ud, vd;
+
+			setPolyFT4(pol);
+			setRGB0(pol, 128, 128, 128);
+
+			gte_ldv3(&sp_pos[a], &sp_pos[b], &sp_pos[c]);
+			gte_rtpt();
+			gte_stsxy0(&pol->x0);
+			gte_stsxy1(&pol->x1);
+			gte_stsxy2(&pol->x2);
+			gte_ldv0(&sp_pos[d]);
+			gte_rtps();
+			gte_stsxy(&pol->x3);
+			gte_avsz4();
+			gte_stotz(&otz);
+
+			env_uv(&m, &sp_nrm[a], &ua, &va);
+			env_uv(&m, &sp_nrm[b], &ub, &vb);
+			env_uv(&m, &sp_nrm[c], &uc, &vc);
+			env_uv(&m, &sp_nrm[d], &ud, &vd);
+			setUV4(pol, ua, va, ub, vb, uc, vc, ud, vd);
+			pol->tpage = env_tpage;
+
+			if (otz <= 0 || otz >= OT_LEN) { continue; }
+			addPrim(db[db_active].ot + otz, pol);
+			db_nextpri = (uint8_t *)(pol + 1);
+		}
+	}
+}
+#endif /* PERF_SPHERE */
+
 /* "SecKC" as a chunky EXTRUDED 3D text logo: every vector-font stroke becomes a
  * filled beam with a darker back face, gently swung so it stays readable. */
 static void draw_seckc_logo(uint32_t frame, int env) {
@@ -1142,6 +1294,10 @@ int main(void) {
 			}
 		}
 
+#if PERF_SPHERE
+		draw_chrome_sphere(frame);
+#endif
+
 		draw_seckc_tex(frame, env);
 		draw_scroller(frame);
 
@@ -1280,6 +1436,19 @@ static void init(void) {
 	rt_tpage_l = getTPage(2, 0, 512, 0);   /* rmbuf cols 0..63   -> VRAM x512 */
 	rt_tpage_r = getTPage(2, 0, 576, 0);   /* rmbuf cols 64..127 -> VRAM x576 */
 	ray_init();
+
+#if PERF_SPHERE
+	/* Chrome sphere: build mesh + reflection map, upload the 16bpp env map to a
+	 * free VRAM page at (640,0) clear of the framebuffers and other textures. */
+	sphere_init();
+	chrome_env_init();
+	{
+		RECT er = { 640, 0, ENV_W, ENV_H };
+		LoadImage(&er, (uint32_t *)chrome_env);
+		DrawSync(0);
+		env_tpage = getTPage(2, 0, 640, 0);
+	}
+#endif
 }
 
 static void display(void) {
