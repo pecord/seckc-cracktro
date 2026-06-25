@@ -41,10 +41,9 @@ void logo_init(void) {
 }
 
 /* Shared slab renderer: TEX_SLICES textured quads stacked in depth, back to
- * front, each at brightness mod[k]. */
-static void skull_slices(const MATRIX *m, const int *mod) {
+ * front, each at brightness mod[k]. The GTE transform is set up by the caller. */
+static void skull_slices(const int *mod) {
 	int k;
-	(void)m;
 	for (k = 0; k < TEX_SLICES; k++) {
 		short sz = (short)(-TEX_DEPTH + (2 * TEX_DEPTH * k) / (TEX_SLICES - 1));
 		SVECTOR q[4] = {
@@ -97,7 +96,7 @@ void logo_skull_render(uint32_t frame, int env) {
 
 	for (k = 0; k < TEX_SLICES; k++)
 		mod[k] = 20 + (26 * k) / (TEX_SLICES - 1) + (env >> 3);
-	skull_slices(&m, mod);
+	skull_slices(mod);
 }
 
 void logo_boot_skull_render(uint32_t f, int fade) {
@@ -117,7 +116,7 @@ void logo_boot_skull_render(uint32_t f, int fade) {
 
 	for (k = 0; k < TEX_SLICES; k++)
 		mod[k] = ((20 + (26 * k) / (TEX_SLICES - 1)) * fade) / 255;
-	skull_slices(&m, mod);
+	skull_slices(mod);
 }
 
 /* ----------------------------------------------------------------------- DVD */

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build the SecKC cracktro and launch it in DuckStation.
+# Build SecKC // PSX and launch it in DuckStation.
 set -e
 export PATH="$HOME/src/psx-toolchain/bin:$PATH"
 export PSN00BSDK_LIBS="$HOME/src/psn00bsdk/build/install/lib/libpsn00b"

@@ -48,7 +48,6 @@ static uint32_t spu_cap[128];   /* 512 bytes = 256 samples */
 int audio_level(uint32_t frame) {
 	static int pending = 0, have_real = 0, last = 0;
 	const int16_t *s = (const int16_t *)spu_cap;
-	(void)frame;
 
 	if (pending && SpuIsTransferCompleted(SPU_TRANSFER_PEEK)) {
 		int i, peak = 0, n = (int)(sizeof(spu_cap) / 2);
