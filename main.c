@@ -168,13 +168,24 @@ static int audio_level(uint32_t frame) {
 	if (have_real)
 		return last >> 7;                  /* 0..32767 peak -> 0..255 */
 #else
+	/* Sample the real CD position only every 8th frame -- issuing a CD command
+	 * every frame can disrupt CD-DA playback on pcsx_rearmed. Between samples we
+	 * advance the envelope index by ~1.25 sectors/frame (75 sectors/s at 60fps)
+	 * so the VU stays smooth without hammering the CD controller. */
 	{
-		CdlLOCINFOP loc;
-		if (CdControl(CdlGetlocP, 0, (uint8_t *)&loc)) {
-			int sec = bcd2i(loc.track_minute) * 60 + bcd2i(loc.track_second);
-			int idx = sec * 75 + bcd2i(loc.track_sector);
-			if (idx >= 0)
-				return vu_env[idx % VU_ENV_LEN];   /* synced 0..255 */
+		static int base_idx = -1;
+		static uint32_t base_frame = 0;
+		if ((frame & 7) == 0) {
+			CdlLOCINFOP loc;
+			if (CdControl(CdlGetlocP, 0, (uint8_t *)&loc)) {
+				int sec = bcd2i(loc.track_minute) * 60 + bcd2i(loc.track_second);
+				base_idx   = sec * 75 + bcd2i(loc.track_sector);
+				base_frame = frame;
+			}
+		}
+		if (base_idx >= 0) {
+			int idx = base_idx + ((int)(frame - base_frame) * 75) / 60;
+			return vu_env[((unsigned)idx) % VU_ENV_LEN];   /* synced 0..255 */
 		}
 	}
 #endif
