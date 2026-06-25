@@ -1,9 +1,9 @@
-# SecKC Cracktro (PSX)
+# SecKC // PSX
 
-A 90s/2000s-style demoscene **cracktro for the original PlayStation**, themed
-around [SecKC](https://www.seckc.org) — Kansas City's longest-running monthly
-hacker meetup. Built with [PSn00bSDK](https://github.com/Lameguy64/PSn00bSDK),
-it boots from a real PS1 disc image and runs on actual hardware, the
+A demoscene production for the **original PlayStation**, themed around
+[SecKC](https://www.seckc.org) — Kansas City's longest-running monthly hacker
+meetup. Built with [PSn00bSDK](https://github.com/Lameguy64/PSn00bSDK), it boots
+from a real PS1 disc image and runs on actual hardware, the
 [MiSTer FPGA](https://github.com/MiSTer-devel) PSX core, or any emulator.
 
 ![hero](screenshots/hero.png)
@@ -14,50 +14,52 @@ No download, no BIOS — it runs on a WebAssembly PlayStation core (pcsx_rearmed
 [OpenBIOS](https://github.com/grumpycoders/pcsx-redux)) via
 [Nostalgist.js](https://nostalgist.js.org/).
 
+> Built as a **learning project**: the source is small, commented, and split into
+> one module per effect so it's easy to fork and read. Start with
+> [ARCHITECTURE.md](ARCHITECTURE.md) for a tour of the frame and how each piece
+> works.
+
 ## What's in it
 
-A full synthwave/vaporwave scene running at 60fps:
+A synthwave scene at 60fps:
 
 - **A synthwave soundtrack** on **CD-DA**, with the visuals reacting to it: the
-  skull is an **audio VU meter** — it reads the live audio off the SPU capture
-  buffer each frame and scales/glows with the music. (The source tree builds an
-  original, all-synthesized track via `tools/make_music.py`.)
-- **A scrolling neon grid + banded sun** — the classic outrun horizon, with a
-  perspective floor grid and a wireframe **heightmap canyon** that rushes toward
-  the camera so it feels like driving through it.
-- **The SecKC ASCII skull** — the group's logo (a skull built from hacker ASCII)
-  baked to a green-phosphor texture and rendered as a spinning, **extruded 3D
-  slab** that tumbles over the scene.
-- **Flying Malört bottles** — tumbling through the scene (a Chicago/SecKC
-  in-joke). Faked into 3D with **crossed billboards** so they never go flat.
-- **A bouncing DVD-screensaver logo** — drifting in the background, flipping to a
-  new neon colour on every wall hit.
-- **A 3D perspective sine-scroller** of greetz — solid filled 3D text on a wave,
+  skull pulses to a **VU level** read from the live CD play position each frame
+  (`audio.c`). The source tree builds an original, all-synthesized track via
+  `tools/make_music.py`.
+- **A scrolling neon grid + banded sun** — the classic outrun horizon, a
+  perspective floor grid, and a wireframe **heightmap canyon** that rushes toward
+  the camera so it feels like driving through it (`backdrop.c`).
+- **The SecKC ASCII skull** — the group's logo baked to a green-phosphor texture
+  and rendered as a spinning, **extruded 3D slab** (`logo.c`). The centrepiece.
+- **A chrome sphere** — a GTE environment-mapped ball that **reflects the live
+  scene** (a "matcap" keyed by screen-space position, so the reflection stays
+  world-anchored as the surface spins). It orbits behind the logo (`sphere.c`).
+- **A bouncing DVD-screensaver logo**, flipping to a new neon colour on every
+  wall hit (`logo.c`).
+- **A 3D perspective scroller** of greetz — solid filled 3D text on a wave,
   carrying SecKC's creed (*"Destroy No Data / Maintain No Persistence / Above All
-  Else Do No Harm"*) and shout-outs to the KC scene.
-- **A custom boot splash**, a warp starfield, and an extruded "SecKC" vector logo.
-
-There's also a **hidden fixed-point raytracer** backdrop (analytic ray/sphere on
-a checker floor, Lambert + specular + a one-bounce reflection — no FPU, no GTE,
-just 16.16 fixed point and an integer sqrt). Flip `#define VAPORWAVE 0` in
-`main.c` to swap the synthwave grid for the raytraced scene.
+  Else Do No Harm"*) and shout-outs to the KC scene (`text.c`).
+- **A custom boot splash** and a warp starfield.
 
 ![boot splash](screenshots/boot_splash.png)
 
-## Performance notes (raytracer mode)
+## Source layout
 
-It's a fill-rate and CPU balancing act. A few tricks that keep it moving:
+Immediate-mode rendering, one module per concern. Full tour in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
-- The camera, floor, and sky are static, so per-pixel **ray directions, floor
-  hit distances, and the background colour are all precomputed once**. Most
-  pixels are a straight table copy each frame.
-- The moving sphere is **screen-space bounding-box culled** — only pixels inside
-  its projected rectangle run the intersection test.
-- `isqrt` is 32-bit (no slow 64-bit ops), the sphere normal uses a precomputed
-  reciprocal-radius multiply instead of a divide, and the 128-wide RT texture is
-  drawn as two 64-wide 16-bit pages (no palette rewrite).
-
-See `main.c` — `rt_render()` and `ray_init()`.
+| File | What it does |
+|------|--------------|
+| `main.c`      | entry point, boot splash, the per-frame loop |
+| `config.h`    | screen/OT constants and the `PERF_*` feature toggles |
+| `gpu.c`       | double buffer, ordering table, primitive + colour helpers |
+| `audio.c`     | CD-DA soundtrack + the music-reactive VU level |
+| `backdrop.c`  | synthwave grid, sun, starfield |
+| `logo.c`      | SecKC skull slab + DVD bouncer |
+| `text.c`      | vector-font labels + the scroller |
+| `sphere.c`    | the environment-mapped chrome ball |
+| `vecfont.h`   | a tiny stroke (vector) font |
 
 ## Build
 
@@ -69,6 +71,7 @@ export PSN00BSDK_LIBS=/path/to/psn00bsdk/lib/libpsn00b
 export PATH=/path/to/mipsel-none-elf/bin:$PATH
 
 python3 tools/make_music.py        # generates music.wav (needs numpy)
+python3 tools/make_loop.py         # trims it to a short seamless CD-DA loop
 cmake --preset default
 cmake --build build
 ```
@@ -76,10 +79,11 @@ cmake --build build
 This produces `build/rave.bin` + `build/rave.cue` (a PS1 disc image with the
 CD-DA audio track) and `build/rave.exe` (a raw PS-EXE).
 
-The `music.wav` track is **not** checked in (it's large) — generate it with
+The music is **not** checked in (it's large) — generate it with
 `tools/make_music.py` (needs `numpy`) before the first build; it's deterministic.
-The textures (`seckc.tim`, `bottle.tim`) are checked in but can be regenerated
-with `tools/make_tex.py` / `tools/make_bottle.py` (need Pillow).
+Textures (`seckc.tim`, `dvd.tim`) are checked in but can be regenerated with
+`tools/make_tex.py` / `tools/make_dvd.py` (need Pillow). The VU envelope
+(`vu_env.h`) is regenerated from the loop with `tools/make_vu.py`.
 
 ## Run
 
