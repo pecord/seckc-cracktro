@@ -152,7 +152,7 @@ btn.addEventListener('click', async () => {
   btn.style.display = 'none'
   status.textContent = 'Fetching disc image…'
   try {
-    const V = '057'   // bump to defeat the browser cache when the disc changes
+    const V = '058'   // bump to defeat the browser cache when the disc changes
     const noStore = { cache: 'no-store' }
     const [cue, bin, bios] = await Promise.all([
       fetch('rave.cue?v=' + V, noStore).then(r => r.arrayBuffer()),

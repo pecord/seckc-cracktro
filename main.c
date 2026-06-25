@@ -1149,14 +1149,26 @@ int main(void) {
 		}
 #endif
 
-		/* re-trigger the CD-DA track if repeat ever drops it (cheap status poll) */
+		/* Keep the music looping with a minimal gap. CdlModeRept doesn't loop a
+		 * single track seamlessly under (emulated) CD, so the track ends and
+		 * stops; the old once-a-second status poll meant up to ~1s of silence
+		 * before we noticed and restarted. Poll the cheap status word every
+		 * couple of frames and re-issue CdlPlay the instant playback drops --
+		 * CdlPlay(track 2) seeks to the track's INDEX 01, skipping the 2s
+		 * pregap. The cooldown stops us from spamming Play during the seek. */
 #if PERF_CDDA
-		if (frame > 90 && (frame % 60) == 0) {
-			uint8_t res[16];
-			CdControl(CdlNop, 0, res);
-			if (!(res[0] & CdlStatPlay)) {
-				uint8_t track = 2;
-				CdControl(CdlPlay, &track, 0);
+		{
+			static int cd_cooldown = 0;
+			if (cd_cooldown > 0) {
+				cd_cooldown--;
+			} else if (frame > 30 && (frame % 2) == 0) {
+				uint8_t res[16];
+				CdControl(CdlNop, 0, res);
+				if (!(res[0] & CdlStatPlay)) {
+					uint8_t track = 2;
+					CdControl(CdlPlay, &track, 0);
+					cd_cooldown = 15;     /* ~0.25s for the seek to settle */
+				}
 			}
 		}
 #endif
