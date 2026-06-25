@@ -242,6 +242,12 @@ static void add_fillstroke(DVECTOR a, DVECTOR b, int w,
 	if (len < 1) len = 1;
 	px = (-sdy * w) / len;
 	py = ( sdx * w) / len;
+	/* At small scales (thin strokes, w==1) integer truncation rounds the
+	 * perpendicular of a DIAGONAL stroke to (0,0), collapsing the quad to a
+	 * zero-width sliver -- so diagonals (A,K,N,S,R...) vanish while vertical and
+	 * horizontal strokes survive. Force at least 1px in each needed axis. */
+	if (px == 0 && sdy != 0) px = sdy > 0 ? -1 : 1;
+	if (py == 0 && sdx != 0) py = sdx > 0 ? 1 : -1;
 	/* drop strokes that project far off-screen (GPU would discard the oversized
 	 * quad anyway, which made waving letters flicker out) */
 	if (a.vx < -400 || a.vx > 720 || b.vx < -400 || b.vx > 720 ||
@@ -1064,8 +1070,8 @@ static void boot_splash(void) {
 			db_nextpri = (uint8_t *)(pol + 1);
 		}
 
-		draw_text2d("SECKC", 160, 198, 4, e, (uint8_t)(e / 4), (uint8_t)(e * 3 / 4), 2);
-		draw_text2d("KANSAS CITY HACKERS", 160, 216, 1,
+		draw_text2d("SECKC", 160, 196, 4, e, (uint8_t)(e / 4), (uint8_t)(e * 3 / 4), 2);
+		draw_text2d("KANSAS CITY HACKERS", 160, 220, 2,
 		            (uint8_t)(e * 4 / 5), e, e, 2);
 
 		{
