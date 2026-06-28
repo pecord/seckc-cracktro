@@ -33,7 +33,7 @@ static const char *GREETZ =
 	"GREETZ TO DC816  COWTOWN COMPUTER CONGRESS  BSIDESKC  HAMMERSPACE    *    "
 	"AND EVERY HACKER MAKER AND BREAKER IN THE 816    *    "
 	"SETEC ASTRONOMY  /  SHALL WE PLAY A GAME  /  FIGHT FOR THE USER    *    "
-	"STAY CURIOUS  -  KEEP HACKING  -  110 BPM ON THE PSX    *    ";
+	"STAY CURIOUS  -  KEEP HACKING  -  150 BPM ON THE PSX    *    ";
 
 /* Each glyph is a flat billboard in world space whose depth depends on its
  * on-screen position (not time): a fixed crest at the reading centre. Letters

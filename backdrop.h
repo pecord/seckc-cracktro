@@ -3,8 +3,8 @@
  * banded sun, and a starfield.
  *
  * Effects with moving state are split into update() (advance once per frame) and
- * render() (emit primitives, safe to call twice) so the two-pass reflection can
- * draw the scene a second time without double-speeding the animation.
+ * render() (emit primitives). That keeps extra render passes possible without
+ * double-speeding the animation.
  */
 #ifndef BACKDROP_H
 #define BACKDROP_H

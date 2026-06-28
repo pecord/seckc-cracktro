@@ -19,7 +19,10 @@ extern const uint32_t dvd_tim[];
 static uint16_t tex_tpage, tex_clut;     /* skull */
 static uint16_t dvd_tpage, dvd_clut;
 
-#define TEX_SLICES  8
+#define TEX_SLICES  5    /* stacked additive slabs for thickness. Each is a near
+                          * full-screen semi-transparent textured quad -- by far
+                          * the demo's heaviest fill -- so keep this low (the
+                          * slices overlap; 5 reads as solid, 8 just costs more). */
 #define TEX_DEPTH   20
 
 void logo_init(void) {
@@ -127,10 +130,26 @@ static int dvd_x = 40, dvd_y = 70, dvd_vx = 2, dvd_vy = 1, dvd_ci = 0;
 
 void dvd_update(void) {
 	dvd_x += dvd_vx; dvd_y += dvd_vy;
-	if (dvd_x <= 0)                  { dvd_x = 0; dvd_vx = -dvd_vx; dvd_ci = (dvd_ci + 1) % 6; }
-	if (dvd_x >= SCREEN_XRES - DVD_W){ dvd_x = SCREEN_XRES - DVD_W; dvd_vx = -dvd_vx; dvd_ci = (dvd_ci + 1) % 6; }
-	if (dvd_y <= 0)                  { dvd_y = 0; dvd_vy = -dvd_vy; dvd_ci = (dvd_ci + 1) % 6; }
-	if (dvd_y >= SCREEN_YRES - DVD_H){ dvd_y = SCREEN_YRES - DVD_H; dvd_vy = -dvd_vy; dvd_ci = (dvd_ci + 1) % 6; }
+	if (dvd_x <= 0) {
+		dvd_x = 0;
+		dvd_vx = -dvd_vx;
+		dvd_ci = (dvd_ci + 1) % 6;
+	}
+	if (dvd_x >= SCREEN_XRES - DVD_W) {
+		dvd_x = SCREEN_XRES - DVD_W;
+		dvd_vx = -dvd_vx;
+		dvd_ci = (dvd_ci + 1) % 6;
+	}
+	if (dvd_y <= 0) {
+		dvd_y = 0;
+		dvd_vy = -dvd_vy;
+		dvd_ci = (dvd_ci + 1) % 6;
+	}
+	if (dvd_y >= SCREEN_YRES - DVD_H) {
+		dvd_y = SCREEN_YRES - DVD_H;
+		dvd_vy = -dvd_vy;
+		dvd_ci = (dvd_ci + 1) % 6;
+	}
 }
 
 void dvd_render(void) {

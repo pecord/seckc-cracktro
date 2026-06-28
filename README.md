@@ -32,14 +32,17 @@ A synthwave scene at 60fps:
   the camera so it feels like driving through it (`backdrop.c`).
 - **The SecKC ASCII skull** — the group's logo baked to a green-phosphor texture
   and rendered as a spinning, **extruded 3D slab** (`logo.c`). The centrepiece.
-- **A chrome sphere** — a GTE environment-mapped ball that **reflects the live
-  scene** (a "matcap" keyed by screen-space position, so the reflection stays
-  world-anchored as the surface spins). It orbits behind the logo (`sphere.c`).
+- **A chrome sphere** — a GTE environment-mapped ball using a synthwave matcap
+  keyed by screen-space position, so the reflection stays world-anchored as the
+  surface spins. A live-reflection experiment is available behind a `PERF_*`
+  toggle, but the default keeps the demo at 60fps (`sphere.c`).
 - **A bouncing DVD-screensaver logo**, flipping to a new neon colour on every
   wall hit (`logo.c`).
 - **A 3D perspective scroller** of greetz — solid filled 3D text on a wave,
   carrying SecKC's creed (*"Destroy No Data / Maintain No Persistence / Above All
   Else Do No Harm"*) and shout-outs to the KC scene (`text.c`).
+- **Framebuffer feedback trails** — the previous frame is lightly re-drawn over
+  the current one for neon afterimages (`gpu.c`).
 - **A custom boot splash** and a warp starfield.
 
 ![boot splash](screenshots/boot_splash.png)
@@ -79,6 +82,18 @@ cmake --build build
 This produces `build/rave.bin` + `build/rave.cue` (a PS1 disc image with the
 CD-DA audio track) and `build/rave.exe` (a raw PS-EXE).
 
+Reflection study builds are available as presets. The most practical one is the
+60fps patched-live mode:
+
+```sh
+cmake --preset live-reflection-lite
+cmake --build --preset live-reflection-lite
+BUILD_DIR=$PWD/build-live-reflection-lite RENDER_OUT=/tmp/rave-live.png tools/render.sh
+```
+
+Use `full-reflection` if you want the exact two-pass version for comparison; it
+is slower.
+
 The music is **not** checked in (it's large) — generate it with
 `tools/make_music.py` (needs `numpy`) before the first build; it's deterministic.
 Textures (`seckc.tim`, `dvd.tim`) are checked in but can be regenerated with
@@ -88,8 +103,8 @@ Textures (`seckc.tim`, `dvd.tim`) are checked in but can be regenerated with
 ## Run
 
 - **Emulator** — open `build/rave.cue` in DuckStation or PCSX-Redux. A PS1 BIOS
-  is required (not included). `tools/render.sh` does a headless screenshot via
-  PCSX-Redux + OpenBIOS.
+  is required (not included). `tools/render.sh` rebuilds, boots DuckStation, and
+  captures the render window to `/tmp/rave.png` for quick visual checks.
 - **MiSTer** — copy `rave.cue` + `rave.bin` to the SD card and load it in the
   PlayStation core.
 - `run.sh` builds and launches it in DuckStation on macOS.

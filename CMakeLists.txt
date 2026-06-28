@@ -8,7 +8,7 @@ project(
 )
 
 psn00bsdk_add_executable(rave GPREL
-	main.c        # entry point, boot splash, two-pass render loop
+	main.c        # entry point, boot splash, render loop
 	gpu.c         # double buffer, ordering table, primitive helpers
 	audio.c       # CD-DA soundtrack + VU level
 	backdrop.c    # synthwave grid, sun, starfield

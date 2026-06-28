@@ -35,12 +35,54 @@
 #ifndef PERF_BG
 #define PERF_BG             1   /* full-screen backdrop + additive blend */
 #endif
+#ifndef PERF_FEEDBACK_TRAILS
+#define PERF_FEEDBACK_TRAILS 0   /* 1 = overlay a dim copy of the previous frame
+                                  * for neon afterimages. */
+#endif
+#ifndef PERF_FEEDBACK_STRENGTH
+#define PERF_FEEDBACK_STRENGTH 8  /* Texture shade before the semi-trans blend.
+                                   * 128 = full texture colour. */
+#endif
+#ifndef PERF_FEEDBACK_ABR
+#define PERF_FEEDBACK_ABR 3       /* PS1 semi-trans mode: back + front/4. */
+#endif
+#ifndef PERF_FEEDBACK_WITH_DYNAMIC_REFLECTION
+#define PERF_FEEDBACK_WITH_DYNAMIC_REFLECTION 0
+#endif
 #ifndef PERF_SPHERE
 #define PERF_SPHERE         1   /* the environment-mapped chrome sphere */
 #endif
 #ifndef PERF_SPHERE_DYNAMIC
-#define PERF_SPHERE_DYNAMIC 1   /* 1 = ball reflects the live scene (prev frame);
-                                 * 0 = reflect only the baked synthwave map */
+#define PERF_SPHERE_DYNAMIC 0   /* 1 = live reflection experiment;
+                                 * 0 = 60fps baked synthwave reflection */
+#endif
+#ifndef PERF_SPHERE_REFLECT_FULL
+#define PERF_SPHERE_REFLECT_FULL 0   /* 1 = slow reference mode: render a full
+                                      * hidden scene for reflection. 0 = copy the
+                                      * previous frame and patch out the ball. */
+#endif
+#ifndef PERF_SPHERE_REFLECT_INTERVAL
+#define PERF_SPHERE_REFLECT_INTERVAL 1   /* Dynamic reflection update cadence.
+                                          * 1 = every frame, 2 = every other
+                                          * frame, etc. Reused frames keep the
+                                          * visible scene smoother. */
+#endif
+#ifndef PERF_SPHERE_ENV_SIZE
+#define PERF_SPHERE_ENV_SIZE 128         /* Dynamic/baked env-map width+height.
+                                          * Try 64 for chunkier experiments. */
+#endif
+#ifndef PERF_SPHERE_SLICES
+#define PERF_SPHERE_SLICES 20
+#endif
+#ifndef PERF_SPHERE_STACKS
+#define PERF_SPHERE_STACKS 12
+#endif
+#ifndef PERF_HUD
+#define PERF_HUD            0   /* 1 = on-screen profiler: per-frame work as a
+                                 * fraction of the NTSC field budget + effective
+                                 * fps. Times real CPU+GPU work with a hardware
+                                 * root counter, so it reflects PS1 silicon, not
+                                 * the host emulator's speed. */
 #endif
 
 #endif /* CONFIG_H */

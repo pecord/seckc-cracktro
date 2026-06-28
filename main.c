@@ -9,13 +9,15 @@
  * The scene, back to front:
  *   backdrop.c  synthwave grid + banded sun + starfield
  *   logo.c      bouncing DVD logo; the SecKC ASCII-skull slab (the centrepiece)
- *   sphere.c    a chrome ball that reflects the live scene (env-mapped)
+ *   sphere.c    a chrome ball with a baked synthwave env map by default
  *   text.c      a 3D perspective greetz scroller
  *   audio.c     150 BPM CD-DA soundtrack; a VU level the skull pulses to
  *
- * Reflection (PERF_SPHERE_DYNAMIC): each frame the previously-displayed frame is
- * copied into the ball's environment map, so the ball mirrors the live scene
- * (one frame of latency). See sphere.c.
+ * Reflection: the default baked env map keeps the demo at 60fps. Optional live
+ * modes either copy and patch the previous frame, or use a slower ball-free
+ * hidden pass; see PERF_SPHERE_DYNAMIC in config.h.
+ * Feedback trails: the visible pass can overlay a dim previous framebuffer copy
+ * after the scene, giving bright neon shapes a cheap afterimage.
  *
  * Module map: config.h (tunables) | gpu.c (render core) | audio.c | backdrop.c |
  * logo.c | text.c | sphere.c. See ARCHITECTURE.md for the full tour.
@@ -30,21 +32,34 @@
 #include "sphere.h"
 #include "text.h"
 
-/* Emit one full scene into the active ordering table, back to front. State-
- * advancing effects (starfield, DVD) are updated once per frame OUTSIDE this. */
-static void scene_render(uint32_t frame, int env) {
+/* Emit one scene into the active ordering table, back to front. State-advancing
+ * effects (starfield, DVD) are updated once per frame OUTSIDE this. */
+static void scene_render(uint32_t frame, int env, int with_sphere, int with_scroller) {
 #if PERF_BG
 	vaporwave_render(frame);
 #endif
 	starfield_render();
 	dvd_render();
 #if PERF_SPHERE
-	sphere_render(frame);
+	if (with_sphere) sphere_render(frame);
 #endif
 	logo_skull_render(frame, env);
-	scroller_render(frame);
+	if (with_scroller) scroller_render(frame);
 #if PERF_BG
 	gpu_additive_blend(OT_LEN - 1);   /* semi-transparent prims add from here */
+#endif
+}
+
+static void scene_postprocess(void) {
+#if PERF_HUD
+	/* Added before the trails at the same slot, so it draws on top of everything
+	 * (within an OT slot, the first-added primitive is drawn last). */
+	gpu_hud_render(0);
+#endif
+#if PERF_FEEDBACK_TRAILS && \
+	(!PERF_SPHERE || !PERF_SPHERE_DYNAMIC || PERF_FEEDBACK_WITH_DYNAMIC_REFLECTION)
+	/* Draw last-ish: it keeps the current frame crisp while old neon lingers. */
+	gpu_feedback_trails(0);
 #endif
 }
 
@@ -71,6 +86,9 @@ static void boot_splash(void) {
 int main(void) {
 	uint32_t frame = 0;
 	int g_vu = 0;
+#if PERF_SPHERE && PERF_SPHERE_DYNAMIC && PERF_SPHERE_REFLECT_INTERVAL > 1
+	int reflect_wait = 0;
+#endif
 
 	gpu_init();
 	audio_init();
@@ -95,13 +113,48 @@ int main(void) {
 		starfield_update();
 		dvd_update();
 
-		gpu_pass_begin();
 #if PERF_SPHERE && PERF_SPHERE_DYNAMIC
-		/* mirror the previous frame into the ball's env map (1-frame delay) */
-		sphere_capture_reflection();
+#if PERF_SPHERE_REFLECT_INTERVAL > 1
+		int update_reflection = (reflect_wait == 0);
+		if (update_reflection) reflect_wait = PERF_SPHERE_REFLECT_INTERVAL - 1;
+		else reflect_wait--;
+#else
+		int update_reflection = 1;
 #endif
-		scene_render(frame, env);
+#if PERF_SPHERE_REFLECT_FULL
+		if (update_reflection) {
+			gpu_prepare_frame();
+			/* Slow reference path: capture a full scene before the ball exists,
+			 * then redraw the full visible scene with the ball. */
+			gpu_pass_begin();
+			scene_render(frame, env, 0, 1);
+			gpu_draw_pass();
+			sphere_capture_reflection();
+
+			gpu_pass_begin();
+			scene_render(frame, env, 1, 1);
+			scene_postprocess();
+			gpu_draw_pass();
+			gpu_finish_frame();
+		} else {
+			gpu_pass_begin();
+			scene_render(frame, env, 1, 1);
+			scene_postprocess();
+			gpu_present();
+		}
+#else
+		if (update_reflection) sphere_capture_reflection();
+		gpu_pass_begin();
+		scene_render(frame, env, 1, 1);
+		scene_postprocess();
 		gpu_present();
+#endif
+#else
+		gpu_pass_begin();
+		scene_render(frame, env, 1, 1);
+		scene_postprocess();
+		gpu_present();
+#endif
 
 		frame++;
 	}

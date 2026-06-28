@@ -21,6 +21,54 @@
 			"warnings": {
 				"dev": false
 			}
+		},
+		{
+			"name":        "live-reflection",
+			"displayName": "Live Reflection",
+			"description": "Build the patched previous-frame reflection experiment.",
+			"inherits":    "default",
+			"binaryDir":   "${sourceDir}/build-live-reflection",
+			"cacheVariables": {
+				"CMAKE_C_FLAGS": "-DPERF_SPHERE_DYNAMIC=1"
+			}
+		},
+		{
+			"name":        "live-reflection-lite",
+			"displayName": "Live Reflection Lite",
+			"description": "60fps patched previous-frame reflection with a cheaper sphere mesh.",
+			"inherits":    "default",
+			"binaryDir":   "${sourceDir}/build-live-reflection-lite",
+			"cacheVariables": {
+				"CMAKE_C_FLAGS": "-DPERF_SPHERE_DYNAMIC=1 -DPERF_SPHERE_SLICES=14 -DPERF_SPHERE_STACKS=8"
+			}
+		},
+		{
+			"name":        "full-reflection",
+			"displayName": "Full Scene Reflection",
+			"description": "Build the slower full-scene reflection reference.",
+			"inherits":    "default",
+			"binaryDir":   "${sourceDir}/build-full-reflection",
+			"cacheVariables": {
+				"CMAKE_C_FLAGS": "-DPERF_SPHERE_DYNAMIC=1 -DPERF_SPHERE_REFLECT_FULL=1"
+			}
+		}
+	],
+	"buildPresets": [
+		{
+			"name":            "default",
+			"configurePreset": "default"
+		},
+		{
+			"name":            "live-reflection",
+			"configurePreset": "live-reflection"
+		},
+		{
+			"name":            "live-reflection-lite",
+			"configurePreset": "live-reflection-lite"
+		},
+		{
+			"name":            "full-reflection",
+			"configurePreset": "full-reflection"
 		}
 	]
 }

@@ -36,11 +36,26 @@ void gpu_init(void);
 
 /* A frame is: gpu_pass_begin();  <effects emit primitives>;  gpu_present(); */
 void gpu_pass_begin(void);     /* clear the active OT, reset the prim allocator */
+void gpu_draw_pass(void);      /* draw active OT to the back buffer, no flip     */
+void gpu_prepare_frame(void);  /* vblank + display the other buffer             */
+void gpu_finish_frame(void);   /* flip active buffers after prepared drawing    */
 void gpu_present(void);        /* wait for vblank, show the active buffer, flip  */
 
 /* Switch the rest of this OT slot to additive blending (semi-transparent prims
  * add their colour). Call once per pass after the opaque scene is emitted. */
 void gpu_additive_blend(int otz);
+
+/* Overlay the previously displayed framebuffer onto this frame. Because a
+ * 320px 16bpp framebuffer spans five 64px PS1 texture pages, this emits one
+ * textured quad per page. */
+void gpu_feedback_trails(int otz);
+
+#if PERF_HUD
+/* Draw the on-screen profiler (bar + work%/fps readout) at OT slot otz. The
+ * timing is sampled around VSync in gpu_prepare_frame using a hardware root
+ * counter, so it measures real PS1 work, not the host emulator's speed. */
+void gpu_hud_render(int otz);
+#endif
 
 /* --- primitive helpers ---------------------------------------------------- */
 

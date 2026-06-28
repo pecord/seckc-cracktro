@@ -32,9 +32,10 @@ while (1) {
     audio_update(frame);                       // keep the CD-DA looping
     starfield_update(); dvd_update();          // advance animated state ONCE
 
+    // optional dynamic sphere reflection update happens here
     gpu_pass_begin();                          // clear this frame's table
-    sphere_capture_reflection();               // last frame -> the ball's mirror
-    scene_render(frame, env);                  // every effect emits primitives
+    scene_render(frame, env, 1, 1);            // every effect emits primitives
+    scene_postprocess();                       // optional framebuffer feedback
     gpu_present();                             // wait for vblank, show it, flip
     frame++;
 }
@@ -76,6 +77,21 @@ against each other correctly.
 
 Primitives are bump-allocated out of `db[active].p` via `db_nextpri`;
 `gpu_pass_begin()` resets that pointer and clears the table.
+
+### Framebuffer feedback
+
+When `PERF_FEEDBACK_TRAILS` is enabled, `gpu_feedback_trails()` draws a dim copy
+of the previously displayed framebuffer over the current visible pass. It uses
+quarter-additive blending, so black parts of the old frame disappear while bright
+neon lines leave an afterimage.
+
+By default the trail pass is skipped for dynamic reflection builds. Combining the
+two tricks makes the sphere capture recursive feedback and costs enough GPU time
+to lose 60fps, which is useful to know but not useful to ship.
+
+The helper emits five quads because a 320px-wide 16bpp framebuffer spans five
+64px texture pages. Each strip samples one page, then lands back in the matching
+screen slice.
 
 ### Helpers everyone uses
 
@@ -131,27 +147,29 @@ tumbles with the ball (which looked wrong — the sun went upside-down).
 
 ### What's in the env map
 
-Two sources, chosen by `PERF_SPHERE_DYNAMIC`:
+Three useful modes:
 
-- **Baked** (`0`): a synthwave panorama built once at boot in `chrome_env_init`
-  (neon sun, slits, magenta grid, stars). Cheap, but static.
-- **Live** (`1`, default): each frame `sphere_capture_reflection` copies the
-  *previously displayed frame* into the env map (downscaled, mirrored L-R like a
-  convex mirror), so the ball mirrors the real scene — logo, grid, scroller.
+- **Baked** (`PERF_SPHERE_DYNAMIC=0`): a synthwave panorama built once at boot in `chrome_env_init`
+  (neon sun, slits, magenta grid, stars). This is the default because it keeps
+  the demo at 60fps and cannot self-reflect.
+- **Patched live** (`PERF_SPHERE_DYNAMIC=1`): copy the previously displayed
+  frame into the env map, then cover the previous sphere's screen-space area with
+  the baked map. This reflects the whole scene with one frame of latency, but
+  avoids the recursive ball-in-ball feedback. The `live-reflection-lite` preset
+  also lowers sphere tessellation and measures at 60fps in DuckStation.
+- **Exact full-scene** (`PERF_SPHERE_DYNAMIC=1`, `PERF_SPHERE_REFLECT_FULL=1`):
+  render a ball-free hidden scene, copy that to the env map, then render the
+  visible scene with the ball. This is the cleanest reflection and the best
+  learning reference, but currently measures around 45fps.
 
-### The feedback wrinkle (and a TODO)
+### Why two passes?
 
-The live capture is the previous frame, which **contains the ball** — so the ball
-reflects itself reflecting itself: an infinite "Droste" spiral. We tame it by
-resetting the env map to the baked panorama each frame and blending the live scene
-over it at **50%**, which halves the self-reflection every bounce so it converges
-in ~1 step.
-
-The *exact* fix is a two-pass render: draw the scene once **without** the ball
-into the env map, then again **with** it to the screen. The capture then never
-contains the ball, so there's zero feedback and no latency — at the cost of ~2×
-scene work (≈30fps). That's a worthwhile follow-up; the single-pass blend is what
-ships today because it keeps 60fps and the ball still weaving behind the logo.
+If the env map copies the previously displayed frame, it also copies the ball.
+That makes the ball reflect itself reflecting itself: an infinite "Droste" spiral.
+The exact mode avoids that by capturing a scene before the ball is drawn. The
+patched mode takes the cheaper route: use the previous completed frame, then hide
+the old ball's approximate footprint in the env map. The cheat is easier to spot
+in a still image than in motion, especially through a noisy curved reflection.
 
 ## audio.c — CD-DA + the VU
 
@@ -176,8 +194,15 @@ them; the comments call out each workaround. All are harmless on real hardware.
 | `PERF_CDDA`          | CD-DA music playback |
 | `PERF_VU_CAPTURE`    | live SPU metering (HW only) vs. the baked envelope |
 | `PERF_BG`            | the full backdrop + additive blend |
+| `PERF_FEEDBACK_TRAILS`| previous-frame neon afterimages |
+| `PERF_FEEDBACK_STRENGTH` / `PERF_FEEDBACK_ABR`| feedback shade and PS1 blend mode |
+| `PERF_FEEDBACK_WITH_DYNAMIC_REFLECTION`| opt into combining feedback with live reflections |
 | `PERF_SPHERE`        | the chrome ball |
-| `PERF_SPHERE_DYNAMIC`| live scene reflection vs. the baked map |
+| `PERF_SPHERE_DYNAMIC`| live reflection experiment vs. the baked 60fps map |
+| `PERF_SPHERE_REFLECT_FULL`| slow reference mode for full-scene reflection capture |
+| `PERF_SPHERE_REFLECT_INTERVAL`| update dynamic reflections every N frames |
+| `PERF_SPHERE_SLICES` / `PERF_SPHERE_STACKS`| sphere tessellation |
+| `PERF_SPHERE_ENV_SIZE`| env-map width/height |
 
 ## VRAM map
 
@@ -186,18 +211,20 @@ x:   0          320     448   512   640   768   896
    +-----------+-------+-----+-----+-----+-----+
 y=0 | fb A      | skull | dvd |     | env | env |
     | 320x240   |       |     |     |work | base|
-y=240| fb B     |       |(dvd@256)  |     |     |
-    | 320x240   |       |     |     |     |     |
+y=256| fb B     |       |(dvd@256)  |     |
+    | 320x240   |       |     |     |     |
 ```
 
-Framebuffers live at x0; everything past x320 is textures and the chrome ball's
-two 128×128 env-map pages. Keeping these from overlapping is manual on the PS1 —
-there's no allocator.
+Framebuffers live at x0. Framebuffer B starts at y=256, leaving a small gap after
+the 240-line display area, so it can be sampled as a texture page for live
+reflections. Everything past x320 is textures and the chrome ball's working
+128×128 env-map page plus a baked copy used to patch self-reflection. Keeping
+these from overlapping is manual on the PS1 — there's no allocator.
 
 ## Building & tooling
 
 See the README. The Python tools under `tools/` regenerate the assets that aren't
 checked in or are derived: `make_music.py` (the track), `make_loop.py` (trim to a
 seamless CD loop), `make_vu.py` (the loudness envelope), `make_tex.py`/`make_dvd.py`
-(textures). `render.sh` + `shot.lua` do a headless screenshot via PCSX-Redux for
-quick visual checks.
+(textures). `render.sh` boots DuckStation, captures its render window, and writes
+`/tmp/rave.png` for quick visual checks.

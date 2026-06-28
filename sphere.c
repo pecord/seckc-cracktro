@@ -6,37 +6,39 @@
  * the reflected image stays anchored to the world while the surface spins under
  * it, exactly like real chrome.
  *
- * The env map is either a baked synthwave panorama (PERF_SPHERE_DYNAMIC 0) or,
- * by default, a live downscaled snapshot of the scene rendered WITHOUT the ball
- * (the two-pass render in main.c). Because the snapshot never contains the ball,
- * there's no feedback loop -- the reflection is exact and single-depth.
+ * The env map is a baked synthwave panorama by default. PERF_SPHERE_DYNAMIC=1
+ * switches to a patched previous-frame copy: it reflects the scene with one
+ * frame of latency, then covers the previous sphere area with the baked map so
+ * the ball does not recursively reflect itself. PERF_SPHERE_REFLECT_FULL=1 uses
+ * a slower exact hidden pass instead.
  *
- * VRAM: working env map at (640,0), pristine baked copy at (768,0), both 128x128
- * 16bpp, clear of the framebuffers and the logo/DVD textures.
+ * VRAM: working env map at (640,0), baked patch source at (768,0), both
+ * 128x128 16bpp and clear of the framebuffers/logo/DVD textures.
  */
 #include <psxgpu.h>
 #include "gpu.h"
 #include "sphere.h"
 
 #if PERF_SPHERE
-#define SP_SLICES  20
-#define SP_STACKS  12
+#define SP_SLICES  PERF_SPHERE_SLICES
+#define SP_STACKS  PERF_SPHERE_STACKS
 #define SP_RAD     105                          /* model radius (a small accent) */
 #define SP_NV      ((SP_SLICES + 1) * (SP_STACKS + 1))
-#define ENV_W      128
-#define ENV_H      128
+#define ENV_W      PERF_SPHERE_ENV_SIZE
+#define ENV_H      PERF_SPHERE_ENV_SIZE
 
 static SVECTOR  sp_pos[SP_NV];                  /* vertex positions (model units) */
 static uint16_t chrome_env[ENV_W * ENV_H];      /* baked env, built once */
 static uint16_t env_tpage;                       /* working map the ball samples (640,0) */
-static uint16_t env_base_tpage;                  /* pristine baked copy (768,0) */
+static uint16_t env_base_tpage;                  /* baked map used to patch self-capture */
+static int      sp_last_cx, sp_last_cy, sp_last_rad;
 
 static inline float fabsf_(float x) { return x < 0 ? -x : x; }
 
 /* Build the baked reflection map: a little synthwave world keyed by the surface
  * normal -- neon sun + slits on the horizon, a magenta perspective grid below,
- * stars above. Used directly when dynamic reflection is off, and as a metallic
- * base the live scene is blended over when it's on. (Boot-time soft-float is OK.) */
+ * stars above. Used directly when dynamic reflection is off. (Boot-time
+ * soft-float is OK.) */
 static void chrome_env_init(void) {
 	int u, v;
 	const float lx = -0.45f, ly = 0.55f, lz = 0.70f;   /* specular light dir */
@@ -47,8 +49,17 @@ static void chrome_env_init(void) {
 			float r2 = nx * nx + ny * ny;
 			float nz, ry, e, r, g, b;
 			if (r2 > 1.0f) r2 = 1.0f;
-			nz = 1.0f - r2; nz = nz > 0 ? nz : 0;
-			{ float x = nz, last = 0; int it; for (it = 0; it < 8 && x != last; it++) { last = x; x = 0.5f * (x + (nz > 0 ? nz / x : 0)); } nz = x; }
+			nz = 1.0f - r2;
+			nz = nz > 0 ? nz : 0;
+			{
+				float x = nz, last = 0.0f;
+				int it;
+				for (it = 0; it < 8 && x != last; it++) {
+					last = x;
+					x = 0.5f * (x + (nz > 0 ? nz / x : 0));
+				}
+				nz = x;
+			}
 			ry = 2.0f * nz * ny;
 			e  = ry;
 			if (e >= 0.0f) {                       /* sky: purple + scan streaks + stars */
@@ -59,8 +70,14 @@ static void chrome_env_init(void) {
 			} else {                               /* floor: magenta perspective grid */
 				float fe = -e, depth = 1.0f / (fe + 0.05f);
 				r = 8; g = 2; b = 12;
-				if (depth * 0.6f - (int)(depth * 0.6f) < 0.14f) { r += 18; g += 3; b += 22; }
-				{ float gx = nx * depth * 0.7f; if (gx - (int)gx < 0.11f && gx - (int)gx >= 0.0f) { r += 14; g += 2; b += 18; } }
+				if (depth * 0.6f - (int)(depth * 0.6f) < 0.14f) {
+					r += 18; g += 3; b += 22;
+				}
+				{
+					float gx = nx * depth * 0.7f;
+					float frac = gx - (int)gx;
+					if (frac < 0.11f && frac >= 0.0f) { r += 14; g += 2; b += 18; }
+				}
 			}
 			{ float glow = 1.0f - fabsf_(e) * 3.0f; /* neon sun on the horizon */
 			  if (glow > 0.0f) {
@@ -107,36 +124,68 @@ void sphere_init(void) {
 }
 
 #if PERF_SPHERE_DYNAMIC
-/* Copy the previous frame (the buffer currently on screen) into the env map so
- * the ball mirrors the live scene: reset to the baked metallic base, then blend
- * the scene over it at 50% (and mirror it in U, since a convex mirror flips
- * left-right). The 50% baked blend halves the ball's self-reflection each frame
- * so the Droste feedback decays in ~1 bounce instead of spiralling. (A two-pass
- * render that captures the scene WITHOUT the ball would remove feedback entirely;
- * see ARCHITECTURE.md -- left as a follow-up.) */
+#if !PERF_SPHERE_REFLECT_FULL
+static int clampi(int v, int lo, int hi) {
+	if (v < lo) return lo;
+	if (v > hi) return hi;
+	return v;
+}
+
+static void patch_previous_sphere(void) {
+	static POLY_FT4 patch;
+	int pad, sx0, sx1, sy0, sy1, ex0, ex1, ey0, ey1;
+
+	if (sp_last_rad <= 0) return;
+
+	pad = sp_last_rad >> 2;
+	if (pad < 4) pad = 4;
+	sx0 = clampi(sp_last_cx - sp_last_rad - pad, 0, SCREEN_XRES - 1);
+	sx1 = clampi(sp_last_cx + sp_last_rad + pad, 0, SCREEN_XRES - 1);
+	sy0 = clampi(sp_last_cy - sp_last_rad - pad, 0, SCREEN_YRES - 1);
+	sy1 = clampi(sp_last_cy + sp_last_rad + pad, 0, SCREEN_YRES - 1);
+
+	ex0 = ((SCREEN_XRES - 1 - sx1) * ENV_W) / SCREEN_XRES;
+	ex1 = ((SCREEN_XRES - 1 - sx0) * ENV_W) / SCREEN_XRES;
+	ey0 = (sy0 * ENV_H) / SCREEN_YRES;
+	ey1 = (sy1 * ENV_H) / SCREEN_YRES;
+
+	if (ex1 <= ex0 || ey1 <= ey0) return;
+
+	setPolyFT4(&patch);
+	setRGB0(&patch, 128, 128, 128);
+	setXY4(&patch, ex0, ey0, ex1, ey0, ex0, ey1, ex1, ey1);
+	setUV4(&patch, ex0, ey0, ex1, ey0, ex0, ey1, ex1, ey1);
+	patch.tpage = env_base_tpage;
+	DrawPrim(&patch);
+}
+#endif
+
+/* Dynamic reflection. The exact mode copies a hidden ball-free render from the
+ * back buffer. The faster default copies the previously displayed frame, then
+ * patches over the previous sphere with the baked env map to suppress feedback.
+ * U is mirrored because a convex mirror flips left-right. */
 void sphere_capture_reflection(void) {
 	static DRAWENV  refl_draw;
-	static POLY_FT4 base, blit;
-	int srcy = db[db_active].disp.disp.y;   /* the buffer currently displayed */
+	static POLY_FT4 blit;
+#if PERF_SPHERE_REFLECT_FULL
+	int srcy = db[db_active].draw.clip.y;   /* the back buffer just rendered */
+#else
+	int srcy = db[db_active].disp.disp.y;   /* the completed frame on screen */
+#endif
 	DrawSync(0);
 	SetDefDrawEnv(&refl_draw, 640, 0, ENV_W, ENV_H);
 	refl_draw.isbg = 0; refl_draw.dtd = 1;
 	PutDrawEnv(&refl_draw);
 
-	setPolyFT4(&base);                              /* baked base (opaque) */
-	setRGB0(&base, 128, 128, 128);
-	setXY4(&base, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
-	setUV4(&base, 0, 0, ENV_W - 1, 0, 0, ENV_H - 1, ENV_W - 1, ENV_H - 1);
-	base.tpage = env_base_tpage;
-	DrawPrim(&base);
-
-	setPolyFT4(&blit);                              /* live scene, 50% over base */
+	setPolyFT4(&blit);
 	setRGB0(&blit, 128, 128, 128);
-	setSemiTrans(&blit, 1);
 	setXY4(&blit, 0, 0, ENV_W, 0, 0, ENV_H, ENV_W, ENV_H);
 	setUV4(&blit, 255, 0, 0, 0, 255, 239, 0, 239); /* 256x240 FB -> 128x128, L-R mirrored */
-	blit.tpage = getTPage(2, 0, 0, srcy);          /* back buffer as a 16bpp texture, ABR=0 */
+	blit.tpage = getTPage(2, 0, 0, srcy);
 	DrawPrim(&blit);
+#if !PERF_SPHERE_REFLECT_FULL
+	patch_previous_sphere();
+#endif
 	DrawSync(0);
 }
 #else
@@ -172,6 +221,9 @@ void sphere_render(uint32_t frame) {
 	cy  = CENTERY + (pos.vy * PROJ) / pos.vz;
 	rad = (SP_RAD  * PROJ) / pos.vz;
 	if (rad < 1) rad = 1;
+	sp_last_cx = cx;
+	sp_last_cy = cy;
+	sp_last_rad = rad;
 
 	for (j = 0; j < SP_STACKS; j++) {
 		for (i = 0; i < SP_SLICES; i++) {
@@ -180,13 +232,20 @@ void sphere_render(uint32_t frame) {
 			int c = a + (SP_SLICES + 1);
 			int d = c + 1;
 			POLY_FT4 *pol = (POLY_FT4 *)db_nextpri;
-			int otz;
+			int otz, nclip;
 			uint8_t ua, va, ub, vb, uc, vc, ud, vd;
 
 			setPolyFT4(pol);
 			setRGB0(pol, 128, 128, 128);
 			gte_ldv3(&sp_pos[a], &sp_pos[b], &sp_pos[c]);
 			gte_rtpt();
+			/* Backface cull: skip the rear hemisphere (it's hidden behind the
+			 * front anyway). Halves this loop's quads, GTE work and matcap
+			 * divides. gte_nclip gives the screen-space winding of the projected
+			 * triangle; back-facing quads have the opposite sign. */
+			gte_nclip();
+			gte_stopz(&nclip);
+			if (nclip <= 0) continue;
 			gte_stsxy0(&pol->x0);
 			gte_stsxy1(&pol->x1);
 			gte_stsxy2(&pol->x2);
