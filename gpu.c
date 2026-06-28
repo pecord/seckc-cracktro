@@ -4,9 +4,18 @@
  */
 #include "gpu.h"
 #if PERF_HUD
-#include <psxapi.h>      /* root counters, for the on-screen profiler */
 #include "text.h"        /* draw_text2d, for the readout */
+/* Hardware Timer 1 (hblank source), driven directly rather than via the BIOS
+ * root-counter calls (which read back 0 under both emulators here). Writing the
+ * mode register also zeroes the counter. ~263 hblanks per NTSC field. */
+#define T1_COUNT (*(volatile uint16_t *)0x1f801110)
+#define T1_MODE  (*(volatile uint16_t *)0x1f801114)
+#define T1_HBLANK_FREERUN 0x0100
 static int hud_work = 0, hud_total = 263, hud_peak = 0;
+/* Also mirrored to a fixed RAM global so a headless harness (PCSX-Redux Lua,
+ * tools/profile.lua) can read the timing without a screenshot:
+ * [0]=work hblanks  [1]=total hblanks  [2]=peak  [3]=frame counter. */
+volatile uint32_t g_perf[4] = { 0, 0, 0, 0 };
 #endif
 
 DB       db[2];
@@ -46,11 +55,7 @@ void gpu_init(void) {
 	gte_SetGeomScreen(PROJ);
 
 #if PERF_HUD
-	/* Free-running hblank counter (~15.7kHz, ~263 ticks per NTSC field), polled.
-	 * We read it around VSync to time real CPU+GPU work per frame. */
-	SetRCnt(RCntCNT1, 0xffff, RCntMdNOINTR);
-	StartRCnt(RCntCNT1);
-	ResetRCnt(RCntCNT1);
+	T1_MODE = T1_HBLANK_FREERUN;   /* start the per-frame work timer */
 #endif
 }
 
@@ -68,14 +73,18 @@ void gpu_draw_pass(void) {
 void gpu_prepare_frame(void) {
 	DrawSync(0);                         /* GPU idle: this frame's drawing is done */
 #if PERF_HUD
-	hud_work = GetRCnt(RCntCNT1);        /* hblanks of CPU+GPU work since frame start */
+	hud_work = T1_COUNT;                 /* hblanks of CPU+GPU work since frame start */
 #endif
 	VSync(0);                            /* sleep off any field time we didn't use */
 #if PERF_HUD
-	hud_total = GetRCnt(RCntCNT1);       /* hblanks frame-start -> vblank = cadence */
-	ResetRCnt(RCntCNT1);
+	hud_total = T1_COUNT;                /* hblanks frame-start -> vblank = cadence */
+	T1_MODE = T1_HBLANK_FREERUN;         /* reset the counter for the next frame */
 	if (hud_work > hud_peak) hud_peak = hud_work;
 	else hud_peak -= (hud_peak - hud_work) >> 5;   /* slow decay */
+	g_perf[0] = (uint32_t)hud_work;
+	g_perf[1] = (uint32_t)hud_total;
+	g_perf[2] = (uint32_t)hud_peak;
+	g_perf[3]++;
 #endif
 	PutDrawEnv(&db[db_active].draw);
 	PutDispEnv(&db[db_active].disp);
